@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="ja" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>管理者ページ | BOOTHDB</title>
+    <link rel="stylesheet" href="css/common.css">
+    <link rel="stylesheet" href="css/modal.css">
+    <link rel="stylesheet" href="css/admin.css">
+</head>
+<body>
+
+    <!-- ヘッダー -->
+    <header class="site-header">
+        <div class="nav-container">
+            <a href="index.html" class="logo-group">
+                <div class="logo-icon">B</div>
+                <span class="logo-text">BOOTHDB</span>
+            </a>
+            <div class="nav-right">
+                <span class="admin-badge">🔐 管理者モード</span>
+                <button class="theme-toggle-btn" id="theme-toggle-btn" title="テーマ切替">☀️</button>
+            </div>
+        </div>
+    </header>
+
+    <!-- ログイン画面 -->
+    <div id="admin-login-screen" class="admin-login-screen">
+        <div class="admin-login-box card-base">
+            <div class="admin-login-icon">🔐</div>
+            <h1 class="admin-login-title">管理者ログイン</h1>
+            <form id="admin-login-form">
+                <div class="form-group">
+                    <label class="form-label" for="admin-password">管理者パスワード</label>
+                    <input class="form-input" type="password" id="admin-password" placeholder="パスワードを入力" required>
+                </div>
+                <button type="submit" class="btn-primary form-submit-btn" id="admin-login-btn">ログイン</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- 管理者ダッシュボード -->
+    <main class="main-content" id="admin-dashboard" style="display: none;">
+
+        <!-- タブナビゲーション -->
+        <div class="admin-tabs">
+            <button class="admin-tab active" data-tab="products">🛍 商品管理</button>
+            <button class="admin-tab" data-tab="reviews">⭐ レビュー管理</button>
+            <button class="admin-tab" data-tab="users">👤 ユーザー管理</button>
+            <button class="admin-tab" data-tab="avatars">🎭 アバター管理</button>
+        </div>
+
+        <!-- 商品管理 -->
+        <div class="admin-panel active" id="panel-products">
+            <div class="section-bar">
+                <h2 class="section-title">商品管理</h2>
+                <button class="btn-primary" onclick="loadAdminProducts()">🔄 更新</button>
+            </div>
+            <div class="admin-table-wrap">
+                <table class="admin-table" id="products-table">
+                    <thead>
+                        <tr>
+                            <th>商品名</th>
+                            <th>クリエイター</th>
+                            <th>価格</th>
+                            <th>登録日</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="products-tbody">
+                        <tr><td colspan="5" class="loading-spinner">読み込み中...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- レビュー管理 -->
+        <div class="admin-panel" id="panel-reviews">
+            <div class="section-bar">
+                <h2 class="section-title">レビュー管理</h2>
+                <button class="btn-primary" onclick="loadAdminReviews()">🔄 更新</button>
+            </div>
+            <div class="admin-table-wrap">
+                <table class="admin-table" id="reviews-table">
+                    <thead>
+                        <tr>
+                            <th>商品名</th>
+                            <th>ユーザー</th>
+                            <th>評価</th>
+                            <th>コメント</th>
+                            <th>投稿日</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="reviews-tbody">
+                        <tr><td colspan="6" class="loading-spinner">読み込み中...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- ユーザー管理 -->
+        <div class="admin-panel" id="panel-users">
+            <div class="section-bar">
+                <h2 class="section-title">ユーザー管理</h2>
+                <button class="btn-primary" onclick="loadAdminUsers()">🔄 更新</button>
+            </div>
+            <div class="admin-table-wrap">
+                <table class="admin-table">
+                    <thead>
+                        <tr>
+                            <th>ユーザー名</th>
+                            <th>登録日</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="users-tbody">
+                        <tr><td colspan="3" class="loading-spinner">読み込み中...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- アバター管理 -->
+        <div class="admin-panel" id="panel-avatars">
+            <div class="section-bar">
+                <h2 class="section-title">アバター管理</h2>
+                <button class="btn-primary" id="open-add-avatar-btn">＋ アバターを追加</button>
+            </div>
+            <div class="admin-table-wrap">
+                <table class="admin-table">
+                    <thead>
+                        <tr>
+                            <th>アバター名</th>
+                            <th>英語名</th>
+                            <th>制作者</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="avatars-tbody">
+                        <tr><td colspan="4" class="loading-spinner">読み込み中...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- アバター追加・編集モーダル -->
+    <div class="modal-overlay" id="avatar-modal" role="dialog" aria-modal="true">
+        <div class="modal-box">
+            <button class="modal-close-btn" aria-label="閉じる">✕</button>
+            <h2 class="modal-title" id="avatar-modal-title">アバターを追加</h2>
+            <form id="avatar-form">
+                <input type="hidden" id="avatar-edit-id">
+                <div class="form-group">
+                    <label class="form-label" for="avatar-name-input">アバター名（日本語）</label>
+                    <input class="form-input" type="text" id="avatar-name-input" placeholder="例: しなの" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="avatar-name-en-input">アバター名（英語）</label>
+                    <input class="form-input" type="text" id="avatar-name-en-input" placeholder="例: Shinano">
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="avatar-creator-input">制作者</label>
+                    <input class="form-input" type="text" id="avatar-creator-input" placeholder="例: Aoi Kurumizawa">
+                </div>
+                <button type="submit" class="btn-primary form-submit-btn" id="avatar-submit-btn">追加する</button>
+            </form>
+        </div>
+    </div>
+
+    <script src="js/api.js"></script>
+    <script src="js/common.js"></script>
+    <script src="js/admin.js"></script>
+</body>
+</html>
