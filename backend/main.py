@@ -354,8 +354,8 @@ async def login(body: dict):
         }
     except HTTPException:
         raise
-    except Exception:
-        raise HTTPException(status_code=401, detail="ログインに失敗しました")
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"ログインに失敗しました: {str(e)}")
 
 
 @app.get("/api/auth/me", tags=["認証"])
