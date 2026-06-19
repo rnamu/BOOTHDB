@@ -322,18 +322,27 @@ def _extract_price(soup: BeautifulSoup) -> Optional[int]:
         except (json.JSONDecodeError, ValueError, TypeError):
             continue
 
-    # フォールバック: ページ"上部"（おすすめ商品一覧より前の部分）から
-    # "¥ 数字" パターンを探す。ページ全体だと末尾のおすすめ商品欄の価格
-    # （時には ¥0 の利用規約ページなど）を誤って拾ってしまうため、
-    # 本文の先頭付近のみに絞り込む。
+    # フォールバック: 価格表示は通常「¥ 数字」の直後に改行や空白が続く
+    # 単独行として表示される（例: "¥ 0" や "¥ 5,000"）。
+    # 文章中の金額言及（クレジット欄やお知らせ文）と区別するため、
+    # 末尾が桁区切りの数字のみで終わる行を優先的に探す。
     page_text = soup.get_text()
-    # 最初の3000文字程度に限定（購入ボタン周辺の価格表示はこの範囲に収まる）
     head_text = page_text[:3000]
+
+    # 行単位で "¥" のみで構成される価格表示行を探す（最優先）
+    line_pattern = re.compile(r"^[¥￥]\s*([\d,]+)\s*~?\s*$", re.MULTILINE)
+    line_match = line_pattern.search(head_text)
+    if line_match:
+        price = _parse_price_string(line_match.group(1))
+        if price is not None:
+            return price
+
+    # フォールバック: 通常のパターンマッチ（0円も正しく許容する）
     yen_pattern = re.compile(r"[¥￥]\s*([\d,]+)")
-    matches = yen_pattern.findall(head_text)
-    for raw in matches:
-        price = _parse_price_string(raw)
-        if price is not None and price > 0:
+    match = yen_pattern.search(head_text)
+    if match:
+        price = _parse_price_string(match.group(1))
+        if price is not None:
             return price
 
     return None
