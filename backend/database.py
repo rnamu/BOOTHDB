@@ -57,6 +57,48 @@ async def create_product(data: dict) -> dict:
     return res.data[0]
 
 
+async def save_product_variations(product_id: str, variations: list[dict]) -> None:
+    """
+    商品のバリエーション一覧を保存する。
+    再収集時などに呼ぶ場合は、既存のバリエーションを一度削除してから入れ直す。
+    """
+    db = get_db()
+    try:
+        # 既存バリエーションを削除（再収集時の重複防止）
+        db.table("product_variations").delete().eq("product_id", product_id).execute()
+
+        if not variations:
+            return
+
+        rows = [
+            {
+                "product_id": product_id,
+                "name": v["name"],
+                "price": v["price"],
+                "sort_order": v.get("sort_order", 0),
+            }
+            for v in variations
+        ]
+        db.table("product_variations").insert(rows).execute()
+    except Exception as e:
+        print(f"[save_product_variations] エラー: {e}")
+
+
+async def get_product_variations(product_id: str) -> list[dict]:
+    """商品のバリエーション一覧を取得する（表示順）"""
+    db = get_db()
+    try:
+        res = db.table("product_variations") \
+            .select("name, price, sort_order") \
+            .eq("product_id", product_id) \
+            .order("sort_order") \
+            .execute()
+        return res.data or []
+    except Exception as e:
+        print(f"[get_product_variations] エラー: {e}")
+        return []
+
+
 async def update_product_price(product_id: str, price: int) -> None:
     """商品の現在価格と最終確認日時を更新する"""
     db = get_db()
