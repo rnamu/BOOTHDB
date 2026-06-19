@@ -283,7 +283,7 @@ def _extract_shop_name_from_og_title(og_title: Optional[str]) -> Optional[str]:
 
 def _extract_price(soup: BeautifulSoup) -> Optional[int]:
     """
-    価格要素を複数のセレクタで試して数値に変換する
+    価格要素を複数のセレクタ・方法で試して数値に変換する
     BOOTH のHTML構造が変わっても対応しやすいよう複数候補を用意
     """
     selectors = [
@@ -292,13 +292,14 @@ def _extract_price(soup: BeautifulSoup) -> Optional[int]:
         '[data-price]',
         ".js-buy-box-price",
         ".price-value",
+        ".u-tpg-c8",
     ]
     for selector in selectors:
         el = soup.select_one(selector)
         if el:
             raw = el.get("data-price") or el.get_text(strip=True)
             price = _parse_price_string(raw)
-            if price is not None:
+            if price is not None and price > 0:
                 return price
 
     # JSONLDから価格を探す（構造化データ）
@@ -315,9 +316,21 @@ def _extract_price(soup: BeautifulSoup) -> Optional[int]:
                 else:
                     raw_price = None
                 if raw_price is not None:
-                    return int(float(str(raw_price)))
+                    price = int(float(str(raw_price)))
+                    if price > 0:
+                        return price
         except (json.JSONDecodeError, ValueError, TypeError):
             continue
+
+    # フォールバック: ページ全体から "¥ 数字" または "￥数字" パターンを正規表現で探す
+    # （価格表示要素のクラス名がBOOTH側の更新で変わっても対応できるようにする）
+    page_text = soup.get_text()
+    yen_pattern = re.compile(r"[¥￥]\s*([\d,]+)")
+    match = yen_pattern.search(page_text)
+    if match:
+        price = _parse_price_string(match.group(1))
+        if price is not None and price > 0:
+            return price
 
     return None
 
