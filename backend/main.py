@@ -339,23 +339,28 @@ async def login(body: dict):
 
     try:
         res = client.auth.sign_in_with_password({"email": email, "password": password})
-        if not res.session:
+
+        session = getattr(res, 'session', None)
+        user = getattr(res, 'user', None)
+
+        if not session or not user:
             raise HTTPException(status_code=401, detail="メールアドレスまたはパスワードが正しくありません")
 
         db = get_db()
-        profile_res = db.table("profiles").select("username").eq("id", res.user.id).maybe_single().execute()
+        profile_res = db.table("profiles").select("username").eq("id", user.id).maybe_single().execute()
         username = (profile_res.data or {}).get("username", "")
 
         return {
-            "access_token": res.session.access_token,
+            "access_token": session.access_token,
             "token_type": "bearer",
-            "user_id": res.user.id,
+            "user_id": user.id,
             "username": username,
         }
     except HTTPException:
         raise
-    except Exception:
-        raise HTTPException(status_code=401, detail="ログインに失敗しました")
+    except Exception as e:
+        print(f"[Login Error] {type(e).__name__}: {str(e)}")
+        raise HTTPException(status_code=401, detail=f"ログインに失敗しました: {type(e).__name__}: {str(e)}")
 
 
 @app.get("/api/auth/me", tags=["認証"])
