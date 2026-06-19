@@ -1,4 +1,5 @@
 # scraper.py - BOOTH商品情報スクレイパー
+# DEBUG_VERSION_MARKER_001
 
 import re
 import asyncio
