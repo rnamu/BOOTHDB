@@ -323,12 +323,12 @@ async def get_crawl_progress(category: str) -> dict:
         res = db.table("crawl_progress") \
             .select("*") \
             .eq("category", category) \
-            .maybe_single() \
+            .limit(1) \
             .execute()
-        if res and res.data:
-            return res.data
-    except Exception:
-        pass
+        if res and res.data and len(res.data) > 0:
+            return res.data[0]
+    except Exception as e:
+        print(f"[get_crawl_progress] エラー: {e}")
     return {"category": category, "last_page": 0, "total_collected": 0}
 
 
