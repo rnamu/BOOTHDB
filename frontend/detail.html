@@ -102,11 +102,18 @@
             <!-- メインコンテンツ -->
             <section class="detail-main">
 
+                <!-- バリエーション一覧（複数価格パターンがある場合のみ表示） -->
+                <div class="card-base variations-card" id="variations-card" style="display: none;">
+                    <h2 class="chart-title">販売バリエーション</h2>
+                    <p class="chart-desc">この商品には複数の価格パターンがあります</p>
+                    <div class="variations-list" id="variations-list"></div>
+                </div>
+
                 <!-- 価格推移グラフ -->
                 <div class="card-base chart-card">
                     <div class="chart-header">
                         <h2 class="chart-title">過去の販売価格推移</h2>
-                        <p class="chart-desc">定期チェックによる価格変動ログ</p>
+                        <p class="chart-desc">定期チェックによる価格変動ログ（最高額ベース）</p>
                     </div>
                     <div class="chart-viewport">
                         <canvas id="price-chart" aria-label="価格推移グラフ" role="img"></canvas>
