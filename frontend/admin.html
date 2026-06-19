@@ -1,424 +1,217 @@
-/* ===========================================
-   admin.js - 管理者ページ専用処理
-   =========================================== */
+<!DOCTYPE html>
+<html lang="ja" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>管理者ページ | BOOTHDB</title>
+    <link rel="stylesheet" href="css/common.css">
+    <link rel="stylesheet" href="css/modal.css">
+    <link rel="stylesheet" href="css/admin.css">
+</head>
+<body>
 
-'use strict';
+    <!-- ヘッダー -->
+    <header class="site-header">
+        <div class="nav-container">
+            <a href="index.html" class="logo-group">
+                <div class="logo-icon">B</div>
+                <span class="logo-text">BOOTHDB</span>
+            </a>
+            <div class="nav-right">
+                <span class="admin-badge">🔐 管理者モード</span>
+                <button class="theme-toggle-btn" id="theme-toggle-btn" title="テーマ切替">☀️</button>
+            </div>
+        </div>
+    </header>
 
-const ADMIN_TOKEN_KEY = 'boothdb_admin_token';
+    <!-- ログイン画面 -->
+    <div id="admin-login-screen" class="admin-login-screen">
+        <div class="admin-login-box card-base">
+            <div class="admin-login-icon">🔐</div>
+            <h1 class="admin-login-title">管理者ログイン</h1>
+            <form id="admin-login-form">
+                <div class="form-group">
+                    <label class="form-label" for="admin-password">管理者パスワード</label>
+                    <input class="form-input" type="password" id="admin-password" placeholder="パスワードを入力" required>
+                </div>
+                <button type="submit" class="btn-primary form-submit-btn" id="admin-login-btn">ログイン</button>
+            </form>
+        </div>
+    </div>
 
-// ==========================================
-// 管理者トークン管理
-// ==========================================
+    <!-- 管理者ダッシュボード -->
+    <main class="main-content" id="admin-dashboard" style="display: none;">
 
-function getAdminToken() {
-    return sessionStorage.getItem(ADMIN_TOKEN_KEY);
-}
+        <!-- タブナビゲーション -->
+        <div class="admin-tabs">
+            <button class="admin-tab active" data-tab="products">🛍 商品管理</button>
+            <button class="admin-tab" data-tab="reviews">⭐ レビュー管理</button>
+            <button class="admin-tab" data-tab="users">👤 ユーザー管理</button>
+            <button class="admin-tab" data-tab="avatars">🎭 アバター管理</button>
+            <button class="admin-tab" data-tab="crawl">🤖 自動収集</button>
+        </div>
 
-function setAdminToken(token) {
-    sessionStorage.setItem(ADMIN_TOKEN_KEY, token);
-}
+        <!-- 商品管理 -->
+        <div class="admin-panel active" id="panel-products">
+            <div class="section-bar">
+                <h2 class="section-title">商品管理</h2>
+                <button class="btn-primary" onclick="loadAdminProducts()">🔄 更新</button>
+            </div>
+            <div class="admin-table-wrap">
+                <table class="admin-table" id="products-table">
+                    <thead>
+                        <tr>
+                            <th>商品名</th>
+                            <th>クリエイター</th>
+                            <th>価格</th>
+                            <th>登録日</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="products-tbody">
+                        <tr><td colspan="5" class="loading-spinner">読み込み中...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
 
-function clearAdminToken() {
-    sessionStorage.removeItem(ADMIN_TOKEN_KEY);
-}
+        <!-- レビュー管理 -->
+        <div class="admin-panel" id="panel-reviews">
+            <div class="section-bar">
+                <h2 class="section-title">レビュー管理</h2>
+                <button class="btn-primary" onclick="loadAdminReviews()">🔄 更新</button>
+            </div>
+            <div class="admin-table-wrap">
+                <table class="admin-table" id="reviews-table">
+                    <thead>
+                        <tr>
+                            <th>商品名</th>
+                            <th>ユーザー</th>
+                            <th>評価</th>
+                            <th>コメント</th>
+                            <th>投稿日</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="reviews-tbody">
+                        <tr><td colspan="6" class="loading-spinner">読み込み中...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
 
-async function adminFetch(path, options = {}) {
-    const token = getAdminToken();
-    const headers = {
-        'Content-Type': 'application/json',
-        ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
-        ...(options.headers || {}),
-    };
-    const response = await fetch(`${API_BASE_URL}${path}`, { ...options, headers });
-    if (response.status === 204) return null;
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.detail || 'エラーが発生しました');
-    return data;
-}
+        <!-- ユーザー管理 -->
+        <div class="admin-panel" id="panel-users">
+            <div class="section-bar">
+                <h2 class="section-title">ユーザー管理</h2>
+                <button class="btn-primary" onclick="loadAdminUsers()">🔄 更新</button>
+            </div>
+            <div class="admin-table-wrap">
+                <table class="admin-table">
+                    <thead>
+                        <tr>
+                            <th>ユーザー名</th>
+                            <th>登録日</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="users-tbody">
+                        <tr><td colspan="3" class="loading-spinner">読み込み中...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
 
-// ==========================================
-// ログイン処理
-// ==========================================
+        <!-- アバター管理 -->
+        <div class="admin-panel" id="panel-avatars">
+            <div class="section-bar">
+                <h2 class="section-title">アバター管理</h2>
+                <button class="btn-primary" id="open-add-avatar-btn">＋ アバターを追加</button>
+            </div>
+            <div class="admin-table-wrap">
+                <table class="admin-table">
+                    <thead>
+                        <tr>
+                            <th>アバター名</th>
+                            <th>英語名</th>
+                            <th>制作者</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="avatars-tbody">
+                        <tr><td colspan="4" class="loading-spinner">読み込み中...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
 
-async function handleAdminLogin(e) {
-    e.preventDefault();
-    const password = document.getElementById('admin-password').value;
-    const btn = document.getElementById('admin-login-btn');
+        <!-- 自動収集 -->
+        <div class="admin-panel" id="panel-crawl">
+            <div class="section-bar">
+                <h2 class="section-title">BOOTHカテゴリ自動収集</h2>
+                <div style="display: flex; gap: 0.6rem;">
+                    <button class="btn-primary" id="run-crawl-btn">▶ 今すぐ収集を実行</button>
+                    <button class="btn-primary" onclick="loadCrawlStatus()">🔄 更新</button>
+                </div>
+            </div>
 
-    btn.disabled = true;
-    btn.textContent = 'ログイン中...';
+            <div class="card-base" style="padding: 1.25rem; margin-bottom: 1.5rem;">
+                <p style="font-size: 0.85rem; color: var(--text-secondary); line-height: 1.6;">
+                    毎日深夜（JST 3:00）に自動で各カテゴリの新着商品を少しずつ収集します。<br>
+                    「今すぐ収集を実行」を押すと、その場で多めのページ数（各カテゴリ10ページ分）を即座に収集します。<br>
+                    進捗は「最後に処理したページ」に記録され、次回はその続きから再開します。最終ページに達すると自動的に1ページ目（最新）に戻ります。
+                </p>
+            </div>
 
-    try {
-        const data = await adminFetch('/api/admin/login', {
-            method: 'POST',
-            body: JSON.stringify({ password }),
-        });
-        setAdminToken(data.admin_token);
-        showDashboard();
-    } catch (err) {
-        showToast(err.message || 'ログインに失敗しました', 'error');
-    } finally {
-        btn.disabled = false;
-        btn.textContent = 'ログイン';
-    }
-}
+            <div id="crawl-running-badge" style="display: none; margin-bottom: 1rem;">
+                <span class="admin-badge" style="color: #059669; background-color: rgba(5,150,105,0.12); border-color: rgba(5,150,105,0.3);">⏳ クロール実行中...</span>
+            </div>
 
-function showDashboard() {
-    document.getElementById('admin-login-screen').style.display = 'none';
-    document.getElementById('admin-dashboard').style.display = 'block';
-    loadAdminProducts();
-}
+            <div class="admin-table-wrap">
+                <table class="admin-table">
+                    <thead>
+                        <tr>
+                            <th>カテゴリ</th>
+                            <th>最終処理ページ</th>
+                            <th>累計新規収集数</th>
+                            <th>最終更新</th>
+                        </tr>
+                    </thead>
+                    <tbody id="crawl-tbody">
+                        <tr><td colspan="4" class="loading-spinner">読み込み中...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
 
-// ==========================================
-// タブ切替
-// ==========================================
+    </main>
 
-function initTabs() {
-    document.querySelectorAll('.admin-tab').forEach(function (tab) {
-        tab.addEventListener('click', function () {
-            document.querySelectorAll('.admin-tab').forEach(function (t) { t.classList.remove('active'); });
-            document.querySelectorAll('.admin-panel').forEach(function (p) { p.classList.remove('active'); });
+    <!-- アバター追加・編集モーダル -->
+    <div class="modal-overlay" id="avatar-modal" role="dialog" aria-modal="true">
+        <div class="modal-box">
+            <button class="modal-close-btn" aria-label="閉じる">✕</button>
+            <h2 class="modal-title" id="avatar-modal-title">アバターを追加</h2>
+            <form id="avatar-form">
+                <input type="hidden" id="avatar-edit-id">
+                <div class="form-group">
+                    <label class="form-label" for="avatar-name-input">アバター名（日本語）</label>
+                    <input class="form-input" type="text" id="avatar-name-input" placeholder="例: しなの" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="avatar-name-en-input">アバター名（英語）</label>
+                    <input class="form-input" type="text" id="avatar-name-en-input" placeholder="例: Shinano">
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="avatar-creator-input">制作者</label>
+                    <input class="form-input" type="text" id="avatar-creator-input" placeholder="例: Aoi Kurumizawa">
+                </div>
+                <button type="submit" class="btn-primary form-submit-btn" id="avatar-submit-btn">追加する</button>
+            </form>
+        </div>
+    </div>
 
-            tab.classList.add('active');
-            const panelId = 'panel-' + tab.getAttribute('data-tab');
-            document.getElementById(panelId).classList.add('active');
-
-            // タブに応じてデータを読み込む
-            const tabName = tab.getAttribute('data-tab');
-            if (tabName === 'products') loadAdminProducts();
-            if (tabName === 'reviews')  loadAdminReviews();
-            if (tabName === 'users')    loadAdminUsers();
-            if (tabName === 'avatars')  loadAdminAvatars();
-            if (tabName === 'crawl')    loadCrawlStatus();
-        });
-    });
-}
-
-// ==========================================
-// 商品管理
-// ==========================================
-
-async function loadAdminProducts() {
-    const tbody = document.getElementById('products-tbody');
-    tbody.innerHTML = '<tr><td colspan="5" class="loading-spinner">読み込み中...</td></tr>';
-
-    try {
-        const data = await adminFetch('/api/admin/products');
-        if (!data.items || data.items.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="5" class="empty-message">商品がありません</td></tr>';
-            return;
-        }
-
-        tbody.innerHTML = data.items.map(function (p) {
-            const date = new Date(p.registered_at).toLocaleDateString('ja-JP');
-            const price = p.current_price != null ? `¥${p.current_price.toLocaleString()}` : '-';
-            return `
-                <tr>
-                    <td class="td-title">${escapeHtml(p.title)}</td>
-                    <td>${escapeHtml(p.creator_name || '-')}</td>
-                    <td class="td-price">${price}</td>
-                    <td class="td-date">${date}</td>
-                    <td>
-                        <div class="admin-action-btns">
-                            <a href="detail.html?id=${escapeHtml(p.id)}" target="_blank" class="btn-edit">詳細</a>
-                            <button class="btn-delete" onclick="deleteProduct('${escapeHtml(p.id)}', '${escapeHtml(p.title)}')">削除</button>
-                        </div>
-                    </td>
-                </tr>
-            `;
-        }).join('');
-    } catch (err) {
-        tbody.innerHTML = `<tr><td colspan="5" class="error-message">${escapeHtml(err.message)}</td></tr>`;
-    }
-}
-
-async function deleteProduct(id, title) {
-    if (!confirm(`「${title}」を削除しますか？\n価格履歴・レビューも一緒に削除されます。`)) return;
-    try {
-        await adminFetch(`/api/admin/products/${id}`, { method: 'DELETE' });
-        showToast('削除しました', 'success');
-        loadAdminProducts();
-    } catch (err) {
-        showToast(err.message, 'error');
-    }
-}
-
-// ==========================================
-// レビュー管理
-// ==========================================
-
-async function loadAdminReviews() {
-    const tbody = document.getElementById('reviews-tbody');
-    tbody.innerHTML = '<tr><td colspan="6" class="loading-spinner">読み込み中...</td></tr>';
-
-    try {
-        const data = await adminFetch('/api/admin/reviews');
-        if (!data.items || data.items.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="6" class="empty-message">レビューがありません</td></tr>';
-            return;
-        }
-
-        tbody.innerHTML = data.items.map(function (r) {
-            const date  = new Date(r.created_at).toLocaleDateString('ja-JP');
-            const stars = '★'.repeat(r.rating) + '☆'.repeat(5 - r.rating);
-            const title = (r.products || {}).title || '-';
-            const username = (r.profiles || {}).username || '匿名';
-            return `
-                <tr>
-                    <td class="td-title">${escapeHtml(title)}</td>
-                    <td>${escapeHtml(username)}</td>
-                    <td><span class="stars-display">${stars}</span></td>
-                    <td class="td-comment">${escapeHtml(r.comment || '-')}</td>
-                    <td class="td-date">${date}</td>
-                    <td>
-                        <div class="admin-action-btns">
-                            <button class="btn-delete" onclick="deleteReview('${escapeHtml(r.id)}')">削除</button>
-                        </div>
-                    </td>
-                </tr>
-            `;
-        }).join('');
-    } catch (err) {
-        tbody.innerHTML = `<tr><td colspan="6" class="error-message">${escapeHtml(err.message)}</td></tr>`;
-    }
-}
-
-async function deleteReview(id) {
-    if (!confirm('このレビューを削除しますか？')) return;
-    try {
-        await adminFetch(`/api/admin/reviews/${id}`, { method: 'DELETE' });
-        showToast('削除しました', 'success');
-        loadAdminReviews();
-    } catch (err) {
-        showToast(err.message, 'error');
-    }
-}
-
-// ==========================================
-// ユーザー管理
-// ==========================================
-
-async function loadAdminUsers() {
-    const tbody = document.getElementById('users-tbody');
-    tbody.innerHTML = '<tr><td colspan="3" class="loading-spinner">読み込み中...</td></tr>';
-
-    try {
-        const data = await adminFetch('/api/admin/users');
-        if (!data.items || data.items.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="3" class="empty-message">ユーザーがいません</td></tr>';
-            return;
-        }
-
-        tbody.innerHTML = data.items.map(function (u) {
-            const date = new Date(u.created_at).toLocaleDateString('ja-JP');
-            return `
-                <tr>
-                    <td style="font-weight: 800;">${escapeHtml(u.username)}</td>
-                    <td class="td-date">${date}</td>
-                    <td>
-                        <div class="admin-action-btns">
-                            <button class="btn-delete" onclick="banUser('${escapeHtml(u.id)}', '${escapeHtml(u.username)}')">BAN</button>
-                        </div>
-                    </td>
-                </tr>
-            `;
-        }).join('');
-    } catch (err) {
-        tbody.innerHTML = `<tr><td colspan="3" class="error-message">${escapeHtml(err.message)}</td></tr>`;
-    }
-}
-
-async function banUser(id, username) {
-    if (!confirm(`「${username}」をBANしますか？\nこの操作は取り消せません。`)) return;
-    try {
-        await adminFetch(`/api/admin/users/${id}`, { method: 'DELETE' });
-        showToast(`${username} をBANしました`, 'success');
-        loadAdminUsers();
-    } catch (err) {
-        showToast(err.message, 'error');
-    }
-}
-
-// ==========================================
-// アバター管理
-// ==========================================
-
-async function loadAdminAvatars() {
-    const tbody = document.getElementById('avatars-tbody');
-    tbody.innerHTML = '<tr><td colspan="4" class="loading-spinner">読み込み中...</td></tr>';
-
-    try {
-        const data = await adminFetch('/api/avatars');
-        if (!data.items || data.items.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="4" class="empty-message">アバターがありません</td></tr>';
-            return;
-        }
-
-        tbody.innerHTML = data.items.map(function (a) {
-            return `
-                <tr>
-                    <td style="font-weight: 800;">${escapeHtml(a.name)}</td>
-                    <td>${escapeHtml(a.name_en || '-')}</td>
-                    <td>${escapeHtml(a.creator || '-')}</td>
-                    <td>
-                        <div class="admin-action-btns">
-                            <button class="btn-edit" onclick="openEditAvatar('${escapeHtml(a.id)}', '${escapeHtml(a.name)}', '${escapeHtml(a.name_en || '')}', '${escapeHtml(a.creator || '')}')">編集</button>
-                            <button class="btn-delete" onclick="deleteAvatar('${escapeHtml(a.id)}', '${escapeHtml(a.name)}')">削除</button>
-                        </div>
-                    </td>
-                </tr>
-            `;
-        }).join('');
-    } catch (err) {
-        tbody.innerHTML = `<tr><td colspan="4" class="error-message">${escapeHtml(err.message)}</td></tr>`;
-    }
-}
-
-function openAddAvatar() {
-    document.getElementById('avatar-modal-title').textContent = 'アバターを追加';
-    document.getElementById('avatar-edit-id').value = '';
-    document.getElementById('avatar-name-input').value = '';
-    document.getElementById('avatar-name-en-input').value = '';
-    document.getElementById('avatar-creator-input').value = '';
-    document.getElementById('avatar-submit-btn').textContent = '追加する';
-    openModal('avatar-modal');
-}
-
-function openEditAvatar(id, name, nameEn, creator) {
-    document.getElementById('avatar-modal-title').textContent = 'アバターを編集';
-    document.getElementById('avatar-edit-id').value = id;
-    document.getElementById('avatar-name-input').value = name;
-    document.getElementById('avatar-name-en-input').value = nameEn;
-    document.getElementById('avatar-creator-input').value = creator;
-    document.getElementById('avatar-submit-btn').textContent = '更新する';
-    openModal('avatar-modal');
-}
-
-async function handleAvatarSubmit(e) {
-    e.preventDefault();
-    const id      = document.getElementById('avatar-edit-id').value;
-    const name    = document.getElementById('avatar-name-input').value.trim();
-    const nameEn  = document.getElementById('avatar-name-en-input').value.trim();
-    const creator = document.getElementById('avatar-creator-input').value.trim();
-    const btn     = document.getElementById('avatar-submit-btn');
-
-    btn.disabled = true;
-
-    try {
-        if (id) {
-            await adminFetch(`/api/admin/avatars/${id}`, {
-                method: 'PATCH',
-                body: JSON.stringify({ name, name_en: nameEn, creator }),
-            });
-            showToast('更新しました', 'success');
-        } else {
-            await adminFetch('/api/admin/avatars', {
-                method: 'POST',
-                body: JSON.stringify({ name, name_en: nameEn, creator }),
-            });
-            showToast('追加しました', 'success');
-        }
-        closeModal('avatar-modal');
-        loadAdminAvatars();
-    } catch (err) {
-        showToast(err.message, 'error');
-    } finally {
-        btn.disabled = false;
-    }
-}
-
-async function deleteAvatar(id, name) {
-    if (!confirm(`「${name}」を削除しますか？`)) return;
-    try {
-        await adminFetch(`/api/admin/avatars/${id}`, { method: 'DELETE' });
-        showToast('削除しました', 'success');
-        loadAdminAvatars();
-    } catch (err) {
-        showToast(err.message, 'error');
-    }
-}
-
-// ==========================================
-// 自動収集（クロール）管理
-// ==========================================
-
-async function loadCrawlStatus() {
-    const tbody = document.getElementById('crawl-tbody');
-    const badge = document.getElementById('crawl-running-badge');
-    tbody.innerHTML = '<tr><td colspan="4" class="loading-spinner">読み込み中...</td></tr>';
-
-    try {
-        const data = await adminFetch('/api/admin/crawl/status');
-
-        badge.style.display = data.running ? 'block' : 'none';
-
-        if (!data.categories || data.categories.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="4" class="empty-message">まだ収集履歴がありません</td></tr>';
-            return;
-        }
-
-        tbody.innerHTML = data.categories.map(function (c) {
-            const date = c.updated_at ? new Date(c.updated_at).toLocaleString('ja-JP') : '-';
-            return `
-                <tr>
-                    <td style="font-weight: 800;">${escapeHtml(c.category)}</td>
-                    <td>${c.last_page ?? 0} ページ目</td>
-                    <td>${(c.total_collected ?? 0).toLocaleString()} 件</td>
-                    <td class="td-date">${date}</td>
-                </tr>
-            `;
-        }).join('');
-    } catch (err) {
-        tbody.innerHTML = `<tr><td colspan="4" class="error-message">${escapeHtml(err.message)}</td></tr>`;
-    }
-}
-
-async function runCrawlNow() {
-    const btn = document.getElementById('run-crawl-btn');
-    if (!confirm('カテゴリの自動収集を今すぐ実行しますか？\n完了まで数分かかります（バックグラウンドで進みます）。')) return;
-
-    btn.disabled = true;
-    btn.textContent = '実行を開始中...';
-
-    try {
-        const data = await adminFetch('/api/admin/crawl/run', { method: 'POST' });
-        showToast(data.message || 'クロールを開始しました', 'success');
-        // 進捗を定期的に確認
-        setTimeout(loadCrawlStatus, 3000);
-    } catch (err) {
-        showToast(err.message, 'error');
-    } finally {
-        btn.disabled = false;
-        btn.textContent = '▶ 今すぐ収集を実行';
-    }
-}
-
-// ==========================================
-// 初期化
-// ==========================================
-
-document.addEventListener('DOMContentLoaded', function () {
-    // すでにトークンがあればダッシュボードを表示
-    if (getAdminToken()) {
-        showDashboard();
-    }
-
-    // ログインフォーム
-    const loginForm = document.getElementById('admin-login-form');
-    if (loginForm) loginForm.addEventListener('submit', handleAdminLogin);
-
-    // タブ初期化
-    initTabs();
-
-    // アバター追加ボタン
-    const addBtn = document.getElementById('open-add-avatar-btn');
-    if (addBtn) addBtn.addEventListener('click', openAddAvatar);
-
-    // アバターフォーム
-    const avatarForm = document.getElementById('avatar-form');
-    if (avatarForm) avatarForm.addEventListener('submit', handleAvatarSubmit);
-
-    // クロール実行ボタン
-    const runCrawlBtn = document.getElementById('run-crawl-btn');
-    if (runCrawlBtn) runCrawlBtn.addEventListener('click', runCrawlNow);
-});
+    <script src="js/api.js"></script>
+    <script src="js/common.js"></script>
+    <script src="js/admin.js"></script>
+</body>
+</html>
