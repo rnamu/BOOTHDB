@@ -86,28 +86,19 @@
             <!-- サイドバー -->
             <aside class="detail-sidebar">
 
-                <!-- 対応アバター -->
-                <div class="card-base spec-card">
-                    <h2 class="spec-card-title">動作保証アバター</h2>
+                <!-- バリエーション一覧（複数価格パターンがある場合のみ表示） -->
+                <div class="card-base spec-card variations-card" id="variations-card" style="display: none;">
+                    <h2 class="spec-card-title">販売バリエーション</h2>
                     <p class="spec-label" style="font-size: 0.75rem; margin-bottom: 0.75rem;">
-                        ※商品説明文から自動抽出されたアバター一覧です。
+                        ※この商品には複数の価格パターンがあります。
                     </p>
-                    <div class="avatar-stack" id="avatar-stack">
-                        <div class="loading-spinner" style="padding: 1rem;">読み込み中...</div>
-                    </div>
+                    <div class="variations-list" id="variations-list"></div>
                 </div>
 
             </aside>
 
             <!-- メインコンテンツ -->
             <section class="detail-main">
-
-                <!-- バリエーション一覧（複数価格パターンがある場合のみ表示） -->
-                <div class="card-base variations-card" id="variations-card" style="display: none;">
-                    <h2 class="chart-title">販売バリエーション</h2>
-                    <p class="chart-desc">この商品には複数の価格パターンがあります</p>
-                    <div class="variations-list" id="variations-list"></div>
-                </div>
 
                 <!-- 価格推移グラフ -->
                 <div class="card-base chart-card">
