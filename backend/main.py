@@ -157,10 +157,13 @@ async def list_products(
 async def get_product(product_id: str):
     """商品詳細を取得する"""
     db = get_db()
-    res = db.table("products").select("*").eq("id", product_id).maybe_single().execute()
-    if not res.data:
-        raise HTTPException(status_code=404, detail="商品が見つかりません")
-    return res.data
+    try:
+        res = db.table("products").select("*").eq("id", product_id).limit(1).execute()
+        if res and res.data and len(res.data) > 0:
+            return res.data[0]
+    except Exception as e:
+        print(f"[get_product] エラー: {e}")
+    raise HTTPException(status_code=404, detail="商品が見つかりません")
 
 
 @app.get("/api/products/{product_id}/variations", tags=["商品"])
