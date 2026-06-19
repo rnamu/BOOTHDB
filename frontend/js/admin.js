@@ -121,6 +121,7 @@ async function loadAdminProducts() {
                     <td>
                         <div class="admin-action-btns">
                             <a href="detail.html?id=${escapeHtml(p.id)}" target="_blank" class="btn-edit">詳細</a>
+                            <button class="btn-edit" onclick="rescrapeProduct('${escapeHtml(p.id)}', '${escapeHtml(p.title)}')">🔄 再収集</button>
                             <button class="btn-delete" onclick="deleteProduct('${escapeHtml(p.id)}', '${escapeHtml(p.title)}')">削除</button>
                         </div>
                     </td>
@@ -129,6 +130,18 @@ async function loadAdminProducts() {
         }).join('');
     } catch (err) {
         tbody.innerHTML = `<tr><td colspan="5" class="error-message">${escapeHtml(err.message)}</td></tr>`;
+    }
+}
+
+async function rescrapeProduct(id, title) {
+    if (!confirm(`「${title}」の情報をBOOTHから再取得しますか？\nタイトル・価格・説明文が上書きされます。`)) return;
+    try {
+        showToast('再取得中...', 'info');
+        await adminFetch(`/api/admin/products/${id}/rescrape`, { method: 'POST' });
+        showToast('情報を更新しました', 'success');
+        loadAdminProducts();
+    } catch (err) {
+        showToast(err.message, 'error');
     }
 }
 
