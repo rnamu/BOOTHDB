@@ -293,6 +293,14 @@ def _extract_price(soup: BeautifulSoup) -> Optional[int]:
     価格要素を複数のセレクタ・方法で試して数値に変換する
     BOOTH のHTML構造が変わっても対応しやすいよう複数候補を用意
     """
+    # 最優先: 購入ボタンの data-product-price 属性（BOOTHが商品ごとに
+    # 正確な価格を埋め込んでいる属性。テキスト解析より確実）
+    btn = soup.select_one('button[data-product-price]')
+    if btn:
+        price = _parse_price_string(btn.get("data-product-price"))
+        if price is not None:
+            return price
+
     selectors = [
         ".price",
         ".item-price",
@@ -420,70 +428,64 @@ def _extract_variations(soup: BeautifulSoup) -> list[dict]:
     """
     商品ページのバリエーション一覧（名前＋価格）を抽出する。
 
-    BOOTHのバリエーション選択ブロックは以下の構造の繰り返しになっている:
-        [バリエーション名]
-        ダウンロード商品
-        ¥ 価格
-        [付随情報（ファイル名など、任意）]
-        カートに入れる
-        ギフトとして贈る
+    BOOTHの「カートに入れる」ボタンには以下の属性が必ず付与されている:
+        data-product-name="商品名（一部省略される場合あり）"
+        data-product-price="正確な価格（数値文字列）"
+        data-product-variant="バリエーションID"
 
-    つまり「カートに入れる」の直前に出てくる ¥価格 行と、
-    そのさらに前にある名前行のペアだけを正として扱う。
-    ページ末尾のおすすめ商品一覧は「カートに入れる」を含まないため、
-    この方式なら誤検出しない。
+    テキスト解析よりもこの属性を直接読む方が圧倒的に確実なため、
+    これを一次情報源とする。
 
     Returns:
         [{"name": "フルパック", "price": 5000, "sort_order": 0}, ...]
         バリエーションがない単一価格の商品の場合は空リストを返す。
     """
-    full_text = soup.get_text(separator="\n")
-    lines = [l.strip() for l in full_text.split("\n") if l.strip()]
+    # 「ギフトとして贈る」ボタン(add-gift)は同じ商品の重複データなので除外し、
+    # 「カートに入れる」ボタン(add-cart)のみを対象にする
+    buttons = soup.select('button[data-product-price].add-cart, button[data-product-price]:not(.add-gift)')
 
-    cart_marker = "カートに入れる"
-    yen_pattern = re.compile(r"^[¥￥]\s*([\d,]+)$")
-    skip_labels = {"ダウンロード商品", "ギフトとして贈る", "在庫なし", "在庫あり", "カートに入れる"}
+    # 上記セレクタがヒットしない場合のフォールバック：全件取得して後でadd-giftを除外
+    if not buttons:
+        buttons = soup.select('button[data-product-price]')
 
     variations: list[dict] = []
+    seen_variant_ids = set()
 
-    for i, line in enumerate(lines):
-        if line != cart_marker:
+    for btn in buttons:
+        classes = btn.get("class") or []
+        if "add-gift" in classes:
+            continue  # ギフトボタンは商品名・価格が重複するためスキップ
+
+        variant_id = btn.get("data-product-variant")
+        if variant_id and variant_id in seen_variant_ids:
+            continue
+        if variant_id:
+            seen_variant_ids.add(variant_id)
+
+        price = _parse_price_string(btn.get("data-product-price"))
+        if price is None:
             continue
 
-        # この「カートに入れる」より手前を遡り、最初に見つかる ¥価格 行を探す
-        price = None
-        price_idx = None
-        for j in range(i - 1, max(i - 8, -1), -1):
-            m = yen_pattern.match(lines[j])
-            if m:
-                price = _parse_price_string(m.group(1))
-                price_idx = j
-                break
+        # バリエーション名を取得する。
+        # まずボタン自身のdata-product-name属性を使い、それが省略形（末尾が...）
+        # の場合は、ボタンの少し手前にあるバリエーション名要素から正式名を探す。
+        raw_name = btn.get("data-product-name") or ""
 
-        if price is None or price_idx is None:
-            continue
-
-        # 価格行よりさらに手前を遡り、ラベルでも価格でもない最初の行を名前とする
-        name = None
-        for j in range(price_idx - 1, max(price_idx - 6, -1), -1):
-            candidate = lines[j]
-            if candidate in skip_labels:
-                continue
-            if yen_pattern.match(candidate):
-                continue
-            name = candidate
-            break
+        # ボタンが含まれる購入ブロック全体から、価格表示の直前にある
+        # バリエーション名テキストを正式名として優先的に使う
+        full_name = _find_variation_label_near_button(btn)
+        name = full_name or raw_name
 
         if not name:
             continue
 
         variations.append({
-            "name": name[:100],
+            "name": name.strip()[:100],
             "price": price,
             "sort_order": len(variations),
         })
 
-    # 同名・同価格の重複を除去（順序は維持）
+    # 同名・同価格の重複を除去（順序維持）
     seen = set()
     unique_variations = []
     for v in variations:
@@ -492,8 +494,6 @@ def _extract_variations(soup: BeautifulSoup) -> list[dict]:
             seen.add(key)
             unique_variations.append(v)
 
-    # 表示順は出現順を尊重するため反転（後ろから探索したため逆順になっている）
-    unique_variations.reverse()
     for idx, v in enumerate(unique_variations):
         v["sort_order"] = idx
 
@@ -502,3 +502,30 @@ def _extract_variations(soup: BeautifulSoup) -> list[dict]:
         return []
 
     return unique_variations
+
+
+def _find_variation_label_near_button(btn) -> Optional[str]:
+    """
+    購入ボタンを含む親ブロックを遡り、その中にある「バリエーション名」と
+    思われるテキスト（商品見出しや価格表示の直前のラベル要素）を探す。
+    見つからない場合はNoneを返す（呼び出し元はdata-product-name属性にフォールバックする）。
+    """
+    # 購入ボタンから3階層程度親をたどり、その中の最初の見出し的要素を探す
+    container = btn
+    for _ in range(4):
+        if container.parent is None:
+            break
+        container = container.parent
+
+    if container is None:
+        return None
+
+    # コンテナ内の最初の小見出し（h3, h4等）またはラベル的なdivを探す
+    for tag_name in ("h3", "h4", "h5"):
+        el = container.find(tag_name)
+        if el:
+            text = el.get_text(strip=True)
+            if text:
+                return text
+
+    return None
