@@ -89,6 +89,7 @@ function initTabs() {
             if (tabName === 'reviews')  loadAdminReviews();
             if (tabName === 'users')    loadAdminUsers();
             if (tabName === 'avatars')  loadAdminAvatars();
+            if (tabName === 'crawl')    loadCrawlStatus();
         });
     });
 }
@@ -338,6 +339,61 @@ async function deleteAvatar(id, name) {
 }
 
 // ==========================================
+// 自動収集（クロール）管理
+// ==========================================
+
+async function loadCrawlStatus() {
+    const tbody = document.getElementById('crawl-tbody');
+    const badge = document.getElementById('crawl-running-badge');
+    tbody.innerHTML = '<tr><td colspan="4" class="loading-spinner">読み込み中...</td></tr>';
+
+    try {
+        const data = await adminFetch('/api/admin/crawl/status');
+
+        badge.style.display = data.running ? 'block' : 'none';
+
+        if (!data.categories || data.categories.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="4" class="empty-message">まだ収集履歴がありません</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = data.categories.map(function (c) {
+            const date = c.updated_at ? new Date(c.updated_at).toLocaleString('ja-JP') : '-';
+            return `
+                <tr>
+                    <td style="font-weight: 800;">${escapeHtml(c.category)}</td>
+                    <td>${c.last_page ?? 0} ページ目</td>
+                    <td>${(c.total_collected ?? 0).toLocaleString()} 件</td>
+                    <td class="td-date">${date}</td>
+                </tr>
+            `;
+        }).join('');
+    } catch (err) {
+        tbody.innerHTML = `<tr><td colspan="4" class="error-message">${escapeHtml(err.message)}</td></tr>`;
+    }
+}
+
+async function runCrawlNow() {
+    const btn = document.getElementById('run-crawl-btn');
+    if (!confirm('カテゴリの自動収集を今すぐ実行しますか？\n完了まで数分かかります（バックグラウンドで進みます）。')) return;
+
+    btn.disabled = true;
+    btn.textContent = '実行を開始中...';
+
+    try {
+        const data = await adminFetch('/api/admin/crawl/run', { method: 'POST' });
+        showToast(data.message || 'クロールを開始しました', 'success');
+        // 進捗を定期的に確認
+        setTimeout(loadCrawlStatus, 3000);
+    } catch (err) {
+        showToast(err.message, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = '▶ 今すぐ収集を実行';
+    }
+}
+
+// ==========================================
 // 初期化
 // ==========================================
 
@@ -361,4 +417,8 @@ document.addEventListener('DOMContentLoaded', function () {
     // アバターフォーム
     const avatarForm = document.getElementById('avatar-form');
     if (avatarForm) avatarForm.addEventListener('submit', handleAvatarSubmit);
+
+    // クロール実行ボタン
+    const runCrawlBtn = document.getElementById('run-crawl-btn');
+    if (runCrawlBtn) runCrawlBtn.addEventListener('click', runCrawlNow);
 });
