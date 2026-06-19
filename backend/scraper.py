@@ -136,9 +136,16 @@ async def scrape_booth_item(item_id: str) -> Optional[dict]:
     soup = BeautifulSoup(response.text, "lxml")
 
     # --- 商品名 ---
-    title = _get_text(soup, "h2.item-name") \
-        or _get_text(soup, '[data-product-name]') \
-        or _get_meta(soup, "og:title")
+    # og:titleは「商品名 - 店名 - BOOTH」の固定フォーマットなので、
+    # 末尾を除去するだけで安定して商品名のみを取得できる
+    title = None
+    og_title = _get_meta(soup, "og:title")
+    if og_title:
+        title = _strip_booth_suffix(og_title)
+
+    if not title:
+        # フォールバック（og:titleが取れなかった場合のみ見出しを試す）
+        title = _get_text(soup, "h2.item-name") or _get_text(soup, '[data-product-name]')
 
     if not title:
         print(f"[Scraper] タイトルが取得できませんでした: {url}")
@@ -149,18 +156,29 @@ async def scrape_booth_item(item_id: str) -> Optional[dict]:
 
     # --- クリエイター名 ---
     creator_name = _get_text(soup, ".shop-name") \
-        or _get_text(soup, '[data-shop-name]') \
-        or _get_meta(soup, "og:site_name")
+        or _get_text(soup, '[data-shop-name]')
 
     # --- ショップ名 ---
     shop_name = _get_text(soup, ".shop-name a") or creator_name
+
+    if not creator_name:
+        # og:site_nameはBOOTH固定文言のため使わず、og:titleの店名部分から拾う
+        og_title = _get_meta(soup, "og:title")
+        creator_name = _extract_shop_name_from_og_title(og_title)
+        shop_name = shop_name or creator_name
 
     # --- サムネイル ---
     thumbnail_url = _get_meta(soup, "og:image")
 
     # --- 説明文 ---
-    description = _get_meta(soup, "og:description") \
-        or _get_text(soup, ".description")
+    # 商品説明本文のコンテナのみを対象にする（おすすめ商品一覧などは除外）
+    description = _get_text(soup, ".js-market-item-detail-description") \
+        or _get_text(soup, ".market-item-detail-description") \
+        or _get_text(soup, "[data-item-description]")
+
+    if not description:
+        # フォールバック: og:descriptionはBOOTH固定の注意書きのことが多いため最終手段
+        description = _get_meta(soup, "og:description")
 
     # --- カテゴリ ---
     category = _extract_category(soup)
@@ -232,6 +250,34 @@ def _get_meta(soup: BeautifulSoup, property_name: str) -> Optional[str]:
         or soup.find("meta", attrs={"name": property_name})
     if tag and tag.get("content"):
         return tag["content"].strip() or None
+    return None
+
+
+def _strip_booth_suffix(og_title: str) -> str:
+    """
+    'オリジナル3Dモデル「しなの」 - ポンデロニウム研究所 - BOOTH'
+    のような og:title から、末尾の店名・'BOOTH' を除去して商品名のみ返す。
+    """
+    # 末尾の " - BOOTH" を除去
+    text = re.sub(r"\s*-\s*BOOTH\s*$", "", og_title)
+    # さらに末尾の " - 店名" を除去（ハイフン区切りの最後のセグメント）
+    parts = text.split(" - ")
+    if len(parts) >= 2:
+        return parts[0].strip()
+    return text.strip()
+
+
+def _extract_shop_name_from_og_title(og_title: Optional[str]) -> Optional[str]:
+    """
+    'オリジナル3Dモデル「しなの」 - ポンデロニウム研究所 - BOOTH'
+    のような og:title から、店名（末尾から2番目のセグメント）を取り出す。
+    """
+    if not og_title:
+        return None
+    text = re.sub(r"\s*-\s*BOOTH\s*$", "", og_title)
+    parts = text.split(" - ")
+    if len(parts) >= 2:
+        return parts[-1].strip()
     return None
 
 
