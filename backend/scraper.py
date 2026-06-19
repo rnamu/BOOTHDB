@@ -36,6 +36,67 @@ def normalize_booth_url(item_id: str) -> str:
 
 
 # ==========================================
+# カテゴリ一覧クロール（巡回収集）
+# ==========================================
+
+# クロール対象カテゴリ（BOOTHのbrowseページ名）
+CRAWL_CATEGORIES = {
+    "3Dモデル": "3D%E3%83%A2%E3%83%87%E3%83%AB",
+    "3Dキャラクター": "3D%E3%82%AD%E3%83%A3%E3%83%A9%E3%82%AF%E3%82%BF%E3%83%BC",
+    "3D衣装": "3D%E8%A1%A3%E8%A3%85",
+    "3D小道具": "3D%E5%B0%8F%E9%81%93%E5%85%B7",
+    "3Dテクスチャ": "3D%E3%83%86%E3%82%AF%E3%82%B9%E3%83%81%E3%83%A3",
+    "3D装飾品": "3D%E8%A3%85%E9%A3%BE%E5%93%81",
+    "3D髪型": "3D%E9%AB%AA%E5%9E%8B",
+}
+
+ITEM_LINK_PATTERN = re.compile(r"/items/(\d+)")
+
+
+async def fetch_category_page_item_ids(category_slug: str, page: int) -> list[str]:
+    """
+    カテゴリ一覧ページから商品IDのリストを取得する
+    （新しい順に並んでいるため、page=1が常に最新）
+    """
+    url = f"https://booth.pm/ja/browse/{category_slug}?page={page}"
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+    }
+
+    try:
+        async with httpx.AsyncClient(
+            timeout=settings.scrape_timeout_seconds,
+            follow_redirects=True,
+        ) as client:
+            response = await client.get(url, headers=headers)
+            response.raise_for_status()
+    except Exception as e:
+        print(f"[Crawler] 一覧ページ取得エラー {category_slug} page={page}: {e}")
+        return []
+
+    soup = BeautifulSoup(response.text, "lxml")
+
+    item_ids: list[str] = []
+    seen = set()
+    for a in soup.select("a[href*='/items/']"):
+        href = a.get("href", "")
+        match = ITEM_LINK_PATTERN.search(href)
+        if match:
+            item_id = match.group(1)
+            if item_id not in seen:
+                seen.add(item_id)
+                item_ids.append(item_id)
+
+    return item_ids
+
+
+# ==========================================
 # スクレイピング本体
 # ==========================================
 
