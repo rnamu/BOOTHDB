@@ -142,17 +142,10 @@ async def get_price_stats(product_id: str) -> dict:
 async def get_avatars(search: Optional[str] = None) -> list[dict]:
     """アバター一覧を取得する"""
     db = get_db()
-    query = db.table("avatars").select("*")
+    query = db.table("avatars").select("*, product_count:product_avatar_map(count)")
     if search:
         query = query.ilike("name", f"%{search}%")
     res = query.order("name").execute()
-    # product_countを整数として付加する
-    for item in res.data:
-        count_res = db.table("product_avatar_map") \
-            .select("product_id", count="exact") \
-            .eq("avatar_id", item["id"]) \
-            .execute()
-        item["product_count"] = count_res.count or 0
     return res.data
 
 
@@ -308,3 +301,40 @@ async def has_user_reviewed(product_id: str, user_id: str) -> bool:
         .maybe_single() \
         .execute()
     return res.data is not None
+
+
+# ==========================================
+# クロール進捗管理
+# ==========================================
+
+async def get_crawl_progress(category: str) -> dict:
+    """カテゴリごとのクロール進捗を取得する（なければ初期値を返す）"""
+    db = get_db()
+    res = db.table("crawl_progress") \
+        .select("*") \
+        .eq("category", category) \
+        .maybe_single() \
+        .execute()
+    if res.data:
+        return res.data
+    return {"category": category, "last_page": 0, "total_collected": 0}
+
+
+async def update_crawl_progress(category: str, last_page: int, collected_delta: int) -> None:
+    """クロール進捗を更新する（UPSERT）"""
+    db = get_db()
+    current = await get_crawl_progress(category)
+    new_total = (current.get("total_collected") or 0) + collected_delta
+
+    db.table("crawl_progress").upsert({
+        "category": category,
+        "last_page": last_page,
+        "total_collected": new_total,
+        "updated_at": datetime.utcnow().isoformat(),
+    }, on_conflict="category").execute()
+
+
+async def reset_crawl_progress(category: str) -> None:
+    """カテゴリの進捗をリセットする（最初からやり直したい時用）"""
+    db = get_db()
+    db.table("crawl_progress").delete().eq("category", category).execute()
