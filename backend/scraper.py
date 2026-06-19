@@ -335,6 +335,9 @@ def _extract_price(soup: BeautifulSoup) -> Optional[int]:
     # 末尾が桁区切りの数字のみで終わる行を優先的に探す。
     page_text = soup.get_text()
     head_text = page_text[:3000]
+    print(f"[DEBUG _extract_price] head_text先頭500文字: {head_text[:500]!r}")
+    all_yen = re.findall(r"[¥￥]\s*[\d,]+", head_text)
+    print(f"[DEBUG _extract_price] head_text内の全¥金額: {all_yen}")
 
     # 行単位で "¥" のみで構成される価格表示行を探す（最優先）
     line_pattern = re.compile(r"^[¥￥]\s*([\d,]+)\s*~?\s*$", re.MULTILINE)
