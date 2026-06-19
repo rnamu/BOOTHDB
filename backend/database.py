@@ -27,12 +27,17 @@ def get_db() -> Client:
 async def get_product_by_booth_id(booth_item_id: str) -> Optional[dict]:
     """BOOTHアイテムIDで商品を取得する"""
     db = get_db()
-    res = db.table("products") \
-        .select("*") \
-        .eq("booth_item_id", booth_item_id) \
-        .maybe_single() \
-        .execute()
-    return res.data
+    try:
+        res = db.table("products") \
+            .select("*") \
+            .eq("booth_item_id", booth_item_id) \
+            .limit(1) \
+            .execute()
+        if res and res.data and len(res.data) > 0:
+            return res.data[0]
+    except Exception as e:
+        print(f"[get_product_by_booth_id] エラー: {e}")
+    return None
 
 
 async def create_product(data: dict) -> dict:
