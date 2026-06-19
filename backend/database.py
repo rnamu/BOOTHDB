@@ -319,13 +319,16 @@ async def has_user_reviewed(product_id: str, user_id: str) -> bool:
 async def get_crawl_progress(category: str) -> dict:
     """カテゴリごとのクロール進捗を取得する（なければ初期値を返す）"""
     db = get_db()
-    res = db.table("crawl_progress") \
-        .select("*") \
-        .eq("category", category) \
-        .maybe_single() \
-        .execute()
-    if res.data:
-        return res.data
+    try:
+        res = db.table("crawl_progress") \
+            .select("*") \
+            .eq("category", category) \
+            .maybe_single() \
+            .execute()
+        if res and res.data:
+            return res.data
+    except Exception:
+        pass
     return {"category": category, "last_page": 0, "total_collected": 0}
 
 
