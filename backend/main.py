@@ -339,27 +339,23 @@ async def login(body: dict):
 
     try:
         res = client.auth.sign_in_with_password({"email": email, "password": password})
-
-        session = getattr(res, 'session', None)
-        user = getattr(res, 'user', None)
-
-        if not session or not user:
+        if not res.session:
             raise HTTPException(status_code=401, detail="メールアドレスまたはパスワードが正しくありません")
 
         db = get_db()
-        profile_res = db.table("profiles").select("username").eq("id", user.id).maybe_single().execute()
+        profile_res = db.table("profiles").select("username").eq("id", res.user.id).maybe_single().execute()
         username = (profile_res.data or {}).get("username", "")
 
         return {
-            "access_token": session.access_token,
+            "access_token": res.session.access_token,
             "token_type": "bearer",
-            "user_id": user.id,
+            "user_id": res.user.id,
             "username": username,
         }
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=401, detail=f"ログインに失敗しました: {str(e)}")
+    except Exception:
+        raise HTTPException(status_code=401, detail="ログインに失敗しました")
 
 
 @app.get("/api/auth/me", tags=["認証"])
@@ -376,6 +372,7 @@ async def me(user: dict = Depends(get_current_user)):
 
 @app.post("/api/admin/login", tags=["管理者"])
 async def admin_login(body: dict):
+    """管理者ログイン（パスワードのみ）"""
     password = body.get("password", "")
     if not verify_admin_password(password):
         raise HTTPException(status_code=401, detail="パスワードが正しくありません")
@@ -386,6 +383,7 @@ async def admin_login(body: dict):
 
 @app.get("/api/admin/users", tags=["管理者"])
 async def admin_list_users(token: str = Depends(require_admin)):
+    """ユーザー一覧（管理者専用）"""
     db = get_db()
     res = db.table("profiles").select("*").order("created_at", desc=True).execute()
     return {"items": res.data, "total": len(res.data)}
@@ -393,6 +391,7 @@ async def admin_list_users(token: str = Depends(require_admin)):
 
 @app.delete("/api/admin/users/{user_id}", tags=["管理者"])
 async def admin_ban_user(user_id: str, token: str = Depends(require_admin)):
+    """ユーザーをBAN（管理者専用）"""
     from supabase import create_client
     client = create_client(settings.supabase_url, settings.supabase_service_key)
     client.auth.admin.delete_user(user_id)
@@ -403,6 +402,7 @@ async def admin_ban_user(user_id: str, token: str = Depends(require_admin)):
 
 @app.get("/api/admin/products", tags=["管理者"])
 async def admin_list_products(token: str = Depends(require_admin)):
+    """全商品一覧（管理者専用）"""
     db = get_db()
     res = db.table("products").select("*").order("registered_at", desc=True).execute()
     return {"items": res.data, "total": len(res.data)}
@@ -410,6 +410,7 @@ async def admin_list_products(token: str = Depends(require_admin)):
 
 @app.delete("/api/admin/products/{product_id}", tags=["管理者"])
 async def admin_delete_product(product_id: str, token: str = Depends(require_admin)):
+    """商品を削除（管理者専用）"""
     db = get_db()
     db.table("products").delete().eq("id", product_id).execute()
     return {"message": "削除しました"}
@@ -417,6 +418,7 @@ async def admin_delete_product(product_id: str, token: str = Depends(require_adm
 
 @app.get("/api/admin/reviews", tags=["管理者"])
 async def admin_list_reviews(token: str = Depends(require_admin)):
+    """全レビュー一覧（管理者専用）"""
     db = get_db()
     res = db.table("reviews").select("*, profiles(username), products(title)").order("created_at", desc=True).execute()
     return {"items": res.data, "total": len(res.data)}
@@ -424,6 +426,7 @@ async def admin_list_reviews(token: str = Depends(require_admin)):
 
 @app.delete("/api/admin/reviews/{review_id}", tags=["管理者"])
 async def admin_delete_review(review_id: str, token: str = Depends(require_admin)):
+    """レビューを削除（管理者専用）"""
     db = get_db()
     db.table("reviews").delete().eq("id", review_id).execute()
     return {"message": "削除しました"}
@@ -431,6 +434,7 @@ async def admin_delete_review(review_id: str, token: str = Depends(require_admin
 
 @app.post("/api/admin/avatars", tags=["管理者"])
 async def admin_create_avatar(body: dict, token: str = Depends(require_admin)):
+    """アバターを追加（管理者専用）"""
     name    = body.get("name", "").strip()
     name_en = body.get("name_en", "").strip()
     creator = body.get("creator", "").strip()
@@ -448,6 +452,7 @@ async def admin_create_avatar(body: dict, token: str = Depends(require_admin)):
 
 @app.patch("/api/admin/avatars/{avatar_id}", tags=["管理者"])
 async def admin_update_avatar(avatar_id: str, body: dict, token: str = Depends(require_admin)):
+    """アバターを編集（管理者専用）"""
     update_data = {k: v for k, v in body.items() if k in ("name", "name_en", "creator")}
     if not update_data:
         raise HTTPException(status_code=400, detail="更新するデータがありません")
@@ -458,6 +463,54 @@ async def admin_update_avatar(avatar_id: str, body: dict, token: str = Depends(r
 
 @app.delete("/api/admin/avatars/{avatar_id}", tags=["管理者"])
 async def admin_delete_avatar(avatar_id: str, token: str = Depends(require_admin)):
+    """アバターを削除（管理者専用）"""
     db = get_db()
     db.table("avatars").delete().eq("id", avatar_id).execute()
     return {"message": "削除しました"}
+
+
+# ==========================================
+# 管理者API - カテゴリクロール
+# ==========================================
+
+_crawl_running = {"active": False}
+
+
+@app.post("/api/admin/crawl/run", tags=["管理者"])
+async def admin_run_crawl(token: str = Depends(require_admin)):
+    """
+    カテゴリクロールを今すぐ実行する（管理者専用）。
+    実行には時間がかかるためバックグラウンドで開始し、即座にレスポンスを返す。
+    """
+    if _crawl_running["active"]:
+        raise HTTPException(status_code=409, detail="クロールはすでに実行中です")
+
+    import asyncio
+    from scheduler import crawl_categories
+
+    async def _run():
+        _crawl_running["active"] = True
+        try:
+            await crawl_categories(pages_per_category=10)
+        finally:
+            _crawl_running["active"] = False
+
+    asyncio.create_task(_run())
+    return {"message": "クロールを開始しました。完了まで数分かかります。"}
+
+
+@app.get("/api/admin/crawl/status", tags=["管理者"])
+async def admin_crawl_status(token: str = Depends(require_admin)):
+    """クロールの進捗状況を取得する（管理者専用）"""
+    from scraper import CRAWL_CATEGORIES
+    from database import get_crawl_progress
+
+    progress_list = []
+    for category_name in CRAWL_CATEGORIES.keys():
+        progress = await get_crawl_progress(category_name)
+        progress_list.append(progress)
+
+    return {
+        "running": _crawl_running["active"],
+        "categories": progress_list,
+    }
