@@ -154,11 +154,23 @@ async def scrape_booth_item(item_id: str) -> Optional[dict]:
 
     # --- 価格・バリエーション ---
     variations = _extract_variations(soup)
+
+    # 単一バリエーション（フォールバック生成）の名前が省略形（末尾が...）の場合、
+    # 確定した正式タイトルに差し替える
+    if len(variations) == 1 and variations[0]["name"].endswith("..."):
+        variations[0]["name"] = title.strip()[:100]
+
+    # --- 価格・バリエーション ---
+    variations = _extract_variations(soup)
     if variations:
         # 全バリエーション中の最高額をトップ表示価格として採用
         price = max(v["price"] for v in variations)
     else:
         price = _extract_price(soup)
+
+    # 単一バリエーション（フォールバックで作られた1件）の名前が
+    # data-product-name由来で省略形（末尾が...）の場合、
+    # 後段で確定する正式タイトルに差し替える（タイトル確定後に実施）
 
     # --- クリエイター名 ---
     creator_name = _get_text(soup, ".shop-name") \
@@ -442,9 +454,14 @@ def _extract_variations(soup: BeautifulSoup) -> list[dict]:
     .variation-item を基準に1件ずつ処理することで、名前と価格を
     確実にペアで取得できる。
 
+    ただし、単一価格（バリエーション選択肢が無い）商品では
+    <li class="variation-item"> 自体がページに存在しないことがある。
+    その場合は、購入ボタン単体（add-cartボタン1つだけ）から
+    商品名＋価格を1件のバリエーションとして組み立てる。
+
     Returns:
-        [{"name": "フルパック", "price": 5000, "sort_order": 0}, ...]
-        バリエーションがない単一価格の商品の場合は空リストを返す。
+        [{"name": "商品名", "price": 800, "sort_order": 0}, ...]
+        価格情報がまったく取得できない場合のみ空リストを返す。
     """
     items = soup.select("li.variation-item")
 
@@ -458,8 +475,6 @@ def _extract_variations(soup: BeautifulSoup) -> list[dict]:
         if not name:
             continue
 
-        # 価格は data-product-price 属性（add-cartボタン）を最優先で使う。
-        # これが取れない場合のみ .variation-price のテキストから抽出する。
         price = None
         cart_btn = item.select_one('button.add-cart[data-product-price]')
         if cart_btn:
@@ -479,5 +494,25 @@ def _extract_variations(soup: BeautifulSoup) -> list[dict]:
             "sort_order": len(variations),
         })
 
-    # 1件でもあればそのまま返す（単一価格商品でも名前+価格の1行を表示するため）
-    return variations
+    if variations:
+        return variations
+
+    # フォールバック: li.variation-item が存在しない単一価格商品の場合、
+    # 購入ボタン単体から「商品名＋価格」を1件のバリエーションとして組み立てる
+    cart_btn = soup.select_one('button.add-cart[data-product-price]')
+    if cart_btn:
+        price = _parse_price_string(cart_btn.get("data-product-price"))
+        if price is not None:
+            # 商品名はdata-product-name属性（省略形の場合あり）から取得し、
+            # 省略されていれば後段でog:titleから補完されたタイトルを使う方が
+            # 望ましいが、ここでは単純にdata-product-nameを使う。
+            raw_name = cart_btn.get("data-product-name") or ""
+            name = raw_name.strip()
+            if name:
+                return [{
+                    "name": name[:100],
+                    "price": price,
+                    "sort_order": 0,
+                }]
+
+    return []
