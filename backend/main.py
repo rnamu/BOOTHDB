@@ -18,7 +18,8 @@ from models import (
 )
 from database import (
     get_product_by_booth_id, create_product, get_products, get_db,
-    add_price_history, get_price_history, get_price_stats,
+    add_price_history, add_price_history_for_variations,
+    get_price_history, get_price_history_by_variation, get_price_stats,
     get_avatars, get_avatar_by_id, get_avatar_by_name, get_products_by_avatar, link_product_avatar,
     create_review, get_reviews, get_review_stats, get_avatar_ratings,
     has_user_reviewed, save_product_variations, get_product_variations,
@@ -126,12 +127,12 @@ async def register_product(
     }
     product = await create_product(product_data)
 
-    if scraped["current_price"] is not None:
-        await add_price_history(product["id"], scraped["current_price"])
-
-    # バリエーションを保存
+    # バリエーションごとの価格履歴を記録（単一価格商品でも1系統として記録される）
     if scraped.get("variations"):
+        await add_price_history_for_variations(product["id"], scraped["variations"])
         await save_product_variations(product["id"], scraped["variations"])
+    elif scraped["current_price"] is not None:
+        await add_price_history(product["id"], scraped["current_price"])
 
     for avatar_name in scraped.get("extracted_avatar_names", []):
         from database import get_avatar_by_name
@@ -182,6 +183,7 @@ async def get_product_price_history(
     product_id: str,
     limit: int = Query(90, ge=7, le=365),
 ):
+    """商品の価格履歴を取得する（後方互換用・単一系統）"""
     db = get_db()
     product_res = db.table("products").select("current_price").eq("id", product_id).maybe_single().execute()
     if not product_res.data:
@@ -200,6 +202,29 @@ async def get_product_price_history(
             {"price": h["price"], "recorded_at": h["recorded_at"]}
             for h in history
         ],
+    }
+
+
+@app.get("/api/products/{product_id}/prices/by-variation", tags=["価格履歴"])
+async def get_product_price_history_by_variation(
+    product_id: str,
+    limit_per_variation: int = Query(90, ge=7, le=365),
+):
+    """商品の価格履歴をバリエーションごとにグループ化して取得する"""
+    db = get_db()
+    product_res = db.table("products").select("current_price").eq("id", product_id).maybe_single().execute()
+    if not product_res.data:
+        raise HTTPException(status_code=404, detail="商品が見つかりません")
+
+    grouped = await get_price_history_by_variation(product_id, limit_per_variation)
+    stats = await get_price_stats(product_id)
+
+    return {
+        "product_id": product_id,
+        "lowest_price": stats.get("lowest_price"),
+        "lowest_price_date": stats.get("lowest_price_date"),
+        "highest_price": stats.get("highest_price"),
+        "series": grouped,  # { "バリエーション名": [{"price":..., "recorded_at":...}, ...], ... }
     }
 
 
@@ -431,11 +456,11 @@ async def rescrape_product_as_user(
     }
     db.table("products").update(update_data).eq("id", product_id).execute()
 
-    if scraped["current_price"] is not None:
-        await add_price_history(product_id, scraped["current_price"])
-
     if scraped.get("variations"):
+        await add_price_history_for_variations(product_id, scraped["variations"])
         await save_product_variations(product_id, scraped["variations"])
+    elif scraped["current_price"] is not None:
+        await add_price_history(product_id, scraped["current_price"])
 
     for avatar_name in scraped.get("extracted_avatar_names", []):
         avatar = await get_avatar_by_name(avatar_name)
@@ -577,13 +602,12 @@ async def admin_rescrape_product(product_id: str, token: str = Depends(require_a
     }
     db.table("products").update(update_data).eq("id", product_id).execute()
 
-    # 価格が変わっていれば履歴に追加
-    if scraped["current_price"] is not None:
-        await add_price_history(product_id, scraped["current_price"])
-
-    # バリエーションも再取得して上書き保存
+    # バリエーションごとの価格履歴を記録し、バリエーション一覧も上書き保存
     if scraped.get("variations"):
+        await add_price_history_for_variations(product_id, scraped["variations"])
         await save_product_variations(product_id, scraped["variations"])
+    elif scraped["current_price"] is not None:
+        await add_price_history(product_id, scraped["current_price"])
 
     # アバター紐付けも再実行
     for avatar_name in scraped.get("extracted_avatar_names", []):
