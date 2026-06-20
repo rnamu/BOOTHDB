@@ -17,6 +17,7 @@ from database import (
     get_avatar_by_name,
     get_crawl_progress,
     update_crawl_progress,
+    save_product_variations,
 )
 from scraper import (
     scrape_price_only,
@@ -112,9 +113,12 @@ async def _register_item_if_new(item_id: str) -> bool:
         "description": scraped["description"],
     }
     product = await create_product(product_data)
-
     if scraped["current_price"] is not None:
         await add_price_history(product["id"], scraped["current_price"])
+
+    # バリエーションを保存
+    if scraped.get("variations"):
+        await save_product_variations(product["id"], scraped["variations"])
 
     for avatar_name in scraped.get("extracted_avatar_names", []):
         avatar = await get_avatar_by_name(avatar_name)
@@ -122,7 +126,6 @@ async def _register_item_if_new(item_id: str) -> bool:
             await link_product_avatar(product["id"], avatar["id"])
         # Supabaseへの連続リクエストを緩和
         await asyncio.sleep(0.3)
-
     return True
 
 
