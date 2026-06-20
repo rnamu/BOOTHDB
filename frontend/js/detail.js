@@ -121,10 +121,11 @@ function renderVariations(variations) {
 
     card.style.display = 'block';
 
-    const highest = Math.max(...variations.map(v => v.price));
+    const isMultiple = variations.length > 1;
+    const highest = isMultiple ? Math.max(...variations.map(v => v.price)) : null;
 
     list.innerHTML = variations.map(function (v) {
-        const isHighest = v.price === highest;
+        const isHighest = isMultiple && v.price === highest;
         return `
             <div class="variation-row">
                 <span class="variation-name">
