@@ -11,7 +11,15 @@ let currentProductId = null;
 // グラフ描画
 // ==========================================
 
-function renderPriceChart(historyData) {
+// バリエーション線の色パレット（最大10色、それ以上は循環使用）
+const VARIATION_COLORS = [
+    '#8b5cf6', '#06b6d4', '#f97316', '#ec4899', '#22c55e',
+    '#eab308', '#3b82f6', '#ef4444', '#14b8a6', '#a855f7',
+];
+
+let lastSeriesData = null;
+
+function renderPriceChart(seriesData) {
     const canvas = document.getElementById('price-chart');
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
@@ -21,16 +29,26 @@ function renderPriceChart(historyData) {
         activeChart = null;
     }
 
-    if (!historyData || historyData.length === 0) {
+    const variationNames = Object.keys(seriesData || {});
+
+    if (variationNames.length === 0) {
         canvas.closest('.chart-viewport').innerHTML = '<p class="empty-message">価格履歴がまだありません</p>';
         return;
     }
 
-    const labels = historyData.map(function (h) {
-        const d = new Date(h.recorded_at);
-        return `${d.getMonth() + 1}/${d.getDate()}`;
+    lastSeriesData = seriesData;
+
+    // 全系統の日付を統合してX軸ラベルを作る（日付昇順・重複なし）
+    const allDatesSet = new Set();
+    variationNames.forEach(function (name) {
+        seriesData[name].forEach(function (h) { allDatesSet.add(h.recorded_at); });
     });
-    const prices = historyData.map(function (h) { return h.price; });
+    const allDates = Array.from(allDatesSet).sort();
+
+    const labels = allDates.map(function (d) {
+        const date = new Date(d);
+        return `${date.getMonth() + 1}/${date.getDate()}`;
+    });
 
     const style  = getComputedStyle(document.documentElement);
     const gridColor  = style.getPropertyValue('--chart-grid').trim();
@@ -40,34 +58,57 @@ function renderPriceChart(historyData) {
     const ttBody     = style.getPropertyValue('--chart-tooltip-body').trim();
     const ttBorder   = style.getPropertyValue('--chart-tooltip-border').trim();
 
-    const fillGradient = ctx.createLinearGradient(0, 0, 0, 300);
-    fillGradient.addColorStop(0, 'rgba(139, 92, 246, 0.2)');
-    fillGradient.addColorStop(1, 'rgba(139, 92, 246, 0.01)');
+    // バリエーションごとにdatasetを作成。
+    // 日付が記録されていない箇所は直前の価格を引き継ぐ（階段状の表示にする）
+    const datasets = variationNames.map(function (name, idx) {
+        const color = VARIATION_COLORS[idx % VARIATION_COLORS.length];
+        const history = seriesData[name];
+
+        const priceByDate = {};
+        history.forEach(function (h) { priceByDate[h.recorded_at] = h.price; });
+
+        let lastKnownPrice = null;
+        const data = allDates.map(function (d) {
+            if (priceByDate[d] !== undefined) {
+                lastKnownPrice = priceByDate[d];
+            }
+            return lastKnownPrice;
+        });
+
+        return {
+            label: name,
+            data: data,
+            borderColor: color,
+            backgroundColor: color + '20',
+            borderWidth: 2.5,
+            tension: 0.15,
+            fill: false,
+            spanGaps: true,
+            pointBackgroundColor: color,
+            pointBorderColor: '#ffffff',
+            pointBorderWidth: 1.5,
+            pointRadius: 4,
+            pointHoverRadius: 7,
+        };
+    });
 
     activeChart = new Chart(ctx, {
         type: 'line',
-        data: {
-            labels,
-            datasets: [{
-                label: '販売価格 (¥)',
-                data: prices,
-                borderColor: '#8b5cf6',
-                backgroundColor: fillGradient,
-                borderWidth: 3.5,
-                tension: 0.15,
-                fill: true,
-                pointBackgroundColor: '#06b6d4',
-                pointBorderColor: '#ffffff',
-                pointBorderWidth: 2,
-                pointRadius: 5,
-                pointHoverRadius: 8,
-            }]
-        },
+        data: { labels, datasets },
         options: {
             responsive: true,
             maintainAspectRatio: false,
             plugins: {
-                legend: { display: false },
+                legend: {
+                    display: variationNames.length > 1,
+                    position: 'top',
+                    labels: {
+                        color: tickColor,
+                        font: { weight: 'bold', size: 11 },
+                        boxWidth: 12,
+                        padding: 10,
+                    }
+                },
                 tooltip: {
                     backgroundColor: ttBg,
                     titleColor: ttTitle,
@@ -75,9 +116,10 @@ function renderPriceChart(historyData) {
                     borderColor: ttBorder,
                     borderWidth: 1,
                     padding: 12,
-                    displayColors: false,
                     callbacks: {
-                        label: function (ctx) { return '¥' + ctx.parsed.y.toLocaleString(); }
+                        label: function (ctx) {
+                            return ctx.dataset.label + ': ¥' + ctx.parsed.y.toLocaleString();
+                        }
                     }
                 }
             },
@@ -100,7 +142,7 @@ function renderPriceChart(historyData) {
 
     // テーマ変更時にグラフを再描画
     new MutationObserver(function () {
-        if (activeChart) renderPriceChart(historyData);
+        if (activeChart && lastSeriesData) renderPriceChart(lastSeriesData);
     }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 }
 
@@ -355,16 +397,17 @@ document.addEventListener('DOMContentLoaded', async function () {
 
     // 並行してデータを取得
     try {
-        const [product, priceData, reviewData, variationData] = await Promise.all([
+        const [product, priceData, priceSeriesData, reviewData, variationData] = await Promise.all([
             ProductApi.get(currentProductId),
             ProductApi.getPriceHistory(currentProductId),
+            ProductApi.getPriceHistoryByVariation(currentProductId),
             ProductApi.getReviews(currentProductId),
             ProductApi.getVariations(currentProductId),
         ]);
 
         renderProductInfo(product);
         renderPriceStats(priceData);
-        renderPriceChart(priceData.history);
+        renderPriceChart(priceSeriesData.series);
         renderReviews(reviewData);
         renderVariations(variationData.items);
 
