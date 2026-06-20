@@ -19,7 +19,7 @@ from models import (
 from database import (
     get_product_by_booth_id, create_product, get_products, get_db,
     add_price_history, get_price_history, get_price_stats,
-    get_avatars, get_avatar_by_id, get_products_by_avatar, link_product_avatar,
+    get_avatars, get_avatar_by_id, get_avatar_by_name, get_products_by_avatar, link_product_avatar,
     create_review, get_reviews, get_review_stats, get_avatar_ratings,
     has_user_reviewed, save_product_variations, get_product_variations,
 )
