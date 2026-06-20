@@ -28,13 +28,13 @@ from scraper import (
 scheduler = AsyncIOScheduler()
 
 # 1回のクロール実行で巡回する最大ページ数
-# （1ページ=約40件として、CRAWL_PAGES_PER_RUN×40件/カテゴリ ずつ進む）
 CRAWL_PAGES_PER_RUN = 5
 
 
 async def check_all_prices() -> None:
     """
     登録済み全商品の価格をチェックし、変動があれば価格履歴に記録する。
+    バリエーションがある商品は全バリエーション分の価格をチェックする。
     BOOTHへの負荷軽減のためリクエスト間にscrape_delay_secondsの間隔を空ける。
     """
     print("[Scheduler] 価格チェック開始")
@@ -50,10 +50,11 @@ async def check_all_prices() -> None:
         booth_item_id = product["booth_item_id"]
 
         try:
-            price = await scrape_price_only(booth_item_id)
+            scraped = await scrape_booth_item(booth_item_id)
 
-            if price is not None:
-                # DBの現在価格を取得して変動確認
+            if scraped:
+                price = scraped["current_price"]
+
                 db = get_db()
                 res = db.table("products") \
                     .select("current_price") \
@@ -63,11 +64,12 @@ async def check_all_prices() -> None:
 
                 current = (res.data or {}).get("current_price")
 
-                # 価格履歴は常に記録（グラフ描画のため）
-                await add_price_history(product_id, price)
+                if scraped.get("variations"):
+                    await add_price_history_for_variations(product_id, scraped["variations"])
+                elif price is not None:
+                    await add_price_history(product_id, price)
 
-                # 価格が変動した場合のみproductsテーブルを更新
-                if current != price:
+                if current != price and price is not None:
                     await update_product_price(product_id, price)
                     print(f"[Scheduler] 価格変動: {booth_item_id} {current}円 → {price}円")
 
@@ -80,7 +82,6 @@ async def check_all_prices() -> None:
             fail_count += 1
             print(f"[Scheduler] エラー item={booth_item_id}: {e}")
 
-        # BOOTH サーバーへの負荷軽減のため待機
         await asyncio.sleep(settings.scrape_delay_seconds)
 
     print(f"[Scheduler] 価格チェック完了 成功:{success_count} 失敗:{fail_count}")
@@ -113,7 +114,6 @@ async def _register_item_if_new(item_id: str) -> bool:
     }
     product = await create_product(product_data)
 
-    # バリエーションごとの価格履歴を記録し、バリエーション一覧も保存
     if scraped.get("variations"):
         await add_price_history_for_variations(product["id"], scraped["variations"])
         await save_product_variations(product["id"], scraped["variations"])
@@ -127,7 +127,6 @@ async def crawl_categories(pages_per_category: int = CRAWL_PAGES_PER_RUN) -> dic
     """
     全カテゴリを巡回して新着商品を収集する。
     各カテゴリの進捗（last_page）を記録し、次回はその続きから再開する。
-    一覧の最終ページに達したら page=1 に戻り、新着を再チェックする。
     """
     print("[Crawler] カテゴリクロール開始")
 
@@ -144,7 +143,6 @@ async def crawl_categories(pages_per_category: int = CRAWL_PAGES_PER_RUN) -> dic
             item_ids = await fetch_category_page_item_ids(category_slug, page)
 
             if not item_ids:
-                # ページが空 = 最終ページを超えた → 次回は1ページ目に戻る
                 print(f"[Crawler] {category_name}: page={page} で空。1ページ目に戻ります")
                 await update_crawl_progress(category_name, 0, category_new)
                 break
@@ -159,10 +157,8 @@ async def crawl_categories(pages_per_category: int = CRAWL_PAGES_PER_RUN) -> dic
                 except Exception as e:
                     print(f"[Crawler] 商品登録エラー item={item_id}: {e}")
 
-                # BOOTHサーバーへの負荷軽減のため待機
                 await asyncio.sleep(settings.scrape_delay_seconds)
 
-            # 正常にページを処理できたら進捗を更新
             await update_crawl_progress(category_name, page, 0)
 
         print(f"[Crawler] {category_name}: 新規 {category_new} 件")
@@ -173,7 +169,6 @@ async def crawl_categories(pages_per_category: int = CRAWL_PAGES_PER_RUN) -> dic
 
 def start_scheduler() -> None:
     """スケジューラーを起動する（アプリ起動時に呼ぶ）"""
-    # 価格チェック（既存）
     scheduler.add_job(
         check_all_prices,
         trigger=IntervalTrigger(hours=settings.scrape_interval_hours),
@@ -182,10 +177,9 @@ def start_scheduler() -> None:
         max_instances=1,
     )
 
-    # カテゴリクロール（毎日深夜3時、JST想定でUTC18時）
     scheduler.add_job(
         crawl_categories,
-        trigger=CronTrigger(hour=18, minute=0),  # UTC 18:00 = JST 翌3:00
+        trigger=CronTrigger(hour=18, minute=0),
         id="category_crawl",
         replace_existing=True,
         max_instances=1,
