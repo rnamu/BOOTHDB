@@ -147,16 +147,13 @@ function renderPriceChart(seriesData) {
 // ==========================================
 
 function renderVariations(variations) {
-    const card = document.getElementById('variations-card');
     const list = document.getElementById('variations-list');
-    if (!card || !list) return;
+    if (!list) return;
 
     if (!variations || variations.length === 0) {
-        card.style.display = 'none';
+        list.innerHTML = '<p class="empty-message">バリエーション情報がありません</p>';
         return;
     }
-
-    card.style.display = 'block';
 
     const isMultiple = variations.length > 1;
     const highest = isMultiple ? Math.max(...variations.map(v => v.price)) : null;
@@ -189,7 +186,7 @@ function renderProductInfo(product) {
     set('breadcrumb-product', product.title);
     set('detail-title', product.title);
     set('detail-creator', product.creator_name || '-');
-    set('spec-category', product.category || '未分類');
+    set('detail-category-badge', product.category || '未分類');
     document.title = `${product.title} | BOOTHDB`;
 
     const thumb = document.getElementById('detail-thumb');
