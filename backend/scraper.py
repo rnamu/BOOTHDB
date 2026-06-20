@@ -400,15 +400,24 @@ def _extract_category(soup: BeautifulSoup) -> Optional[str]:
     そのまま使い、一致しない場合も生のテキストをそのまま保存する
     （将来別カテゴリも収集対象にしたときに備えるため）。
     """
-    breadcrumb_container = soup.select_one("#js-item-category-breadcrumbs")
-    print(f"[DEBUG _extract_category] breadcrumb_container found: {breadcrumb_container is not None}")
-    if breadcrumb_container:
-        links = breadcrumb_container.select("a")
-        print(f"[DEBUG _extract_category] links found: {len(links)}, texts: {[l.get_text(strip=True) for l in links]}")
-        if links:
-            first_category = links[0].get_text(strip=True)
-            if first_category:
-                return CATEGORY_NORMALIZE_MAP.get(first_category, first_category)
+    # breadcrumb_container.select("a") ではなく、ページ全体に対して
+    # "#js-item-category-breadcrumbs a" というCSSセレクタを直接使う。
+    # pixiv-icon要素のShadow DOM構文(<template shadowrootmode="open">)が
+    # 親要素を起点にした子孫検索を阻害するケースがあるため、
+    # soup全体から直接探すことで回避する。
+    links = soup.select("#js-item-category-breadcrumbs a")
+    if links:
+        first_category = links[0].get_text(strip=True)
+        if first_category:
+            return CATEGORY_NORMALIZE_MAP.get(first_category, first_category)
+
+    # さらなるフォールバック: hrefが/browse/を含むリンクをページ全体から探す
+    # （js-item-category-breadcrumbsの構造自体が変わっていた場合の保険）
+    browse_links = soup.select("a[href*='/browse/']")
+    if browse_links:
+        first_category = browse_links[0].get_text(strip=True)
+        if first_category:
+            return CATEGORY_NORMALIZE_MAP.get(first_category, first_category)
 
     # フォールバック1: 一般的なbreadcrumbクラス
     breadcrumb = soup.select(".breadcrumb li, .breadcrumbs li")
@@ -423,6 +432,25 @@ def _extract_category(soup: BeautifulSoup) -> Optional[str]:
         text = tag_el.get_text(strip=True)
         if text:
             return CATEGORY_NORMALIZE_MAP.get(text, text)
+
+    # フォールバック3: 正規表現で直接HTML文字列からカテゴリリンクを抜き出す
+    # （lxmlパーサーがpixiv-icon要素周辺の構造を壊している場合の最終手段）
+    html_str = str(soup)
+    container_match = re.search(
+        r'id="js-item-category-breadcrumbs".*?</nav>',
+        html_str,
+        re.DOTALL,
+    )
+    if container_match:
+        container_html = container_match.group(0)
+        href_matches = re.findall(
+            r'<a[^>]*href="[^"]*?/browse/[^"]*"[^>]*>([^<]+)</a>',
+            container_html,
+        )
+        if href_matches:
+            first_category = href_matches[0].strip()
+            if first_category:
+                return CATEGORY_NORMALIZE_MAP.get(first_category, first_category)
 
     return None
 
