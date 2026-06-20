@@ -392,6 +392,60 @@ async def me(user: dict = Depends(get_current_user)):
     return {"user_id": user["id"], "email": user["email"], "username": username}
 
 
+# サイト管理者として扱うメールアドレス一覧
+ADMIN_EMAIL_WHITELIST = {"admin@boothdb.com"}
+
+
+@app.post("/api/products/{product_id}/rescrape", tags=["商品"])
+async def rescrape_product_as_user(
+    product_id: str,
+    user: dict = Depends(get_current_user),
+):
+    """
+    商品情報を再取得して上書き更新する。
+    ADMIN_EMAIL_WHITELISTに登録されたメールアドレスのユーザーのみ実行できる
+    （index.htmlからの通常ログインで管理者操作をするための経路）。
+    """
+    if (user.get("email") or "").lower() not in ADMIN_EMAIL_WHITELIST:
+        raise HTTPException(status_code=403, detail="この操作には管理者権限が必要です")
+
+    db = get_db()
+    res = db.table("products").select("booth_item_id").eq("id", product_id).maybe_single().execute()
+    if not res or not res.data:
+        raise HTTPException(status_code=404, detail="商品が見つかりません")
+
+    booth_item_id = res.data["booth_item_id"]
+    scraped = await scrape_booth_item(booth_item_id)
+    if not scraped:
+        raise HTTPException(status_code=422, detail="再取得に失敗しました。BOOTH側で商品が削除された可能性があります。")
+
+    update_data = {
+        "title": scraped["title"],
+        "creator_name": scraped["creator_name"],
+        "shop_name": scraped["shop_name"],
+        "current_price": scraped["current_price"],
+        "thumbnail_url": scraped["thumbnail_url"],
+        "category": scraped["category"],
+        "description": scraped["description"],
+        "last_checked_at": __import__("datetime").datetime.utcnow().isoformat(),
+    }
+    db.table("products").update(update_data).eq("id", product_id).execute()
+
+    if scraped["current_price"] is not None:
+        await add_price_history(product_id, scraped["current_price"])
+
+    if scraped.get("variations"):
+        await save_product_variations(product_id, scraped["variations"])
+
+    for avatar_name in scraped.get("extracted_avatar_names", []):
+        avatar = await get_avatar_by_name(avatar_name)
+        if avatar:
+            await link_product_avatar(product_id, avatar["id"])
+
+    updated = db.table("products").select("*").eq("id", product_id).maybe_single().execute()
+    return updated.data
+
+
 # ==========================================
 # 管理者API
 # ==========================================
