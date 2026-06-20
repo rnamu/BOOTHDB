@@ -5,7 +5,6 @@ from config import settings
 from typing import Optional
 from datetime import datetime
 
-# サービスロールキーを使ったクライアント（バックエンド専用）
 _client: Optional[Client] = None
 
 
@@ -21,10 +20,7 @@ def get_db() -> Client:
 
 
 def _first_or_none(res) -> Optional[dict]:
-    """
-    .limit(1).execute() の結果から1件目を安全に取り出す。
-    maybe_single()はレコード0件のときにライブラリ内部で例外を起こすことがあるため使わない。
-    """
+    """.limit(1).execute() の結果から1件目を安全に取り出す"""
     if res and getattr(res, "data", None):
         if len(res.data) > 0:
             return res.data[0]
@@ -58,13 +54,9 @@ async def create_product(data: dict) -> dict:
 
 
 async def save_product_variations(product_id: str, variations: list[dict]) -> None:
-    """
-    商品のバリエーション一覧を保存する。
-    再収集時などに呼ぶ場合は、既存のバリエーションを一度削除してから入れ直す。
-    """
+    """商品のバリエーション一覧を保存する（既存削除→入れ直し）"""
     db = get_db()
     try:
-        # 既存バリエーションを削除（再収集時の重複防止）
         db.table("product_variations").delete().eq("product_id", product_id).execute()
 
         if not variations:
@@ -132,6 +124,68 @@ async def get_products(
     return res.data, (res.count or 0)
 
 
+async def get_new_products(limit: int = 6) -> list[dict]:
+    """新着商品を取得する（登録日時の新しい順）"""
+    db = get_db()
+    try:
+        res = db.table("products") \
+            .select("*") \
+            .order("registered_at", desc=True) \
+            .limit(limit) \
+            .execute()
+        return res.data or []
+    except Exception as e:
+        print(f"[get_new_products] エラー: {e}")
+        return []
+
+
+async def get_sale_products(limit: int = 6) -> list[dict]:
+    """
+    セール中（直近で値下がりした）商品を取得する。
+
+    price_history を商品ごとに新しい順で見て、直近の価格が
+    その前の価格より下がっている商品を「セール中」とみなす。
+    対象が多い場合に備え、最近チェックされた商品から優先的に確認する。
+    """
+    db = get_db()
+    try:
+        # 価格が記録されている商品をある程度の件数だけ取得し、
+        # その中から値下がりしているものを抽出する
+        candidates = db.table("products") \
+            .select("id, title, creator_name, current_price, thumbnail_url, booth_url, category, registered_at") \
+            .order("last_checked_at", desc=True) \
+            .limit(200) \
+            .execute()
+
+        sale_items = []
+        for product in (candidates.data or []):
+            history = db.table("price_history") \
+                .select("price, recorded_at") \
+                .eq("product_id", product["id"]) \
+                .order("recorded_at", desc=True) \
+                .limit(2) \
+                .execute()
+
+            rows = history.data or []
+            if len(rows) < 2:
+                continue
+
+            latest_price = rows[0]["price"]
+            previous_price = rows[1]["price"]
+
+            if latest_price < previous_price:
+                product["original_price"] = previous_price
+                sale_items.append(product)
+
+            if len(sale_items) >= limit:
+                break
+
+        return sale_items
+    except Exception as e:
+        print(f"[get_sale_products] エラー: {e}")
+        return []
+
+
 async def get_all_products_for_scrape() -> list[dict]:
     """定期スクレイピング対象の全商品を取得する"""
     db = get_db()
@@ -147,12 +201,8 @@ async def get_all_products_for_scrape() -> list[dict]:
 
 async def add_price_history(product_id: str, price: int, variation_name: Optional[str] = None) -> None:
     """
-    価格履歴を追加する。
-    直近の記録（同じバリエーション名）と同じ価格の場合は新しい点を追加せず、
-    グラフが「再収集のたびに点が増える」状態になるのを防ぐ。
-    価格が変動した場合のみ新しい点を記録する。
-
-    variation_name: バリエーション名。Noneの場合は単一価格商品扱い。
+    価格履歴を追加する。直近の記録（同じバリエーション名）と同じ価格の場合は
+    新しい点を追加しない。
     """
     db = get_db()
     try:
@@ -172,11 +222,9 @@ async def add_price_history(product_id: str, price: int, variation_name: Optiona
             latest_price = latest.data[0]["price"]
 
         if latest_price == price:
-            # 価格が変わっていなければ記録をスキップ
             return
     except Exception as e:
         print(f"[add_price_history] 直近価格の確認エラー: {e}")
-        # 確認に失敗した場合は安全側に倒して記録する
 
     db.table("price_history").insert({
         "product_id": product_id,
@@ -187,16 +235,13 @@ async def add_price_history(product_id: str, price: int, variation_name: Optiona
 
 
 async def add_price_history_for_variations(product_id: str, variations: list[dict]) -> None:
-    """
-    商品の全バリエーション分の価格履歴をまとめて記録する。
-    variations: [{"name": "フルパック", "price": 5000}, ...]
-    """
+    """商品の全バリエーション分の価格履歴をまとめて記録する"""
     for v in variations:
         await add_price_history(product_id, v["price"], variation_name=v["name"])
 
 
 async def get_price_history(product_id: str, limit: int = 90) -> list[dict]:
-    """商品の価格履歴を取得する（最新limit件、単一価格商品の後方互換用）"""
+    """商品の価格履歴を取得する（後方互換用）"""
     db = get_db()
     res = db.table("price_history") \
         .select("price, recorded_at") \
@@ -208,18 +253,7 @@ async def get_price_history(product_id: str, limit: int = 90) -> list[dict]:
 
 
 async def get_price_history_by_variation(product_id: str, limit_per_variation: int = 90) -> dict:
-    """
-    商品の価格履歴を「バリエーション名ごと」にグループ化して取得する。
-
-    Returns:
-        {
-            "フルパック": [{"price": 5000, "recorded_at": "..."}, ...],
-            "マヌカ": [{"price": 2300, "recorded_at": "..."}, ...],
-            ...
-        }
-        バリエーションのない単一価格商品の場合は、商品名（または"価格"）を
-        キーとした1系統のデータを返す。
-    """
+    """商品の価格履歴を「バリエーション名ごと」にグループ化して取得する"""
     db = get_db()
     try:
         res = db.table("price_history") \
@@ -246,11 +280,7 @@ async def get_price_history_by_variation(product_id: str, limit_per_variation: i
 
 
 async def get_price_stats(product_id: str) -> dict:
-    """
-    最安値・最高値・平均値を取得する。
-    バリエーションがある商品の場合、全バリエーションの全履歴を横断して計算する
-    （「最安値」はどのバリエーションでも構わずその商品で過去最も安かった額）。
-    """
+    """最安値・最高値・平均値を取得する"""
     db = get_db()
     res = db.table("price_history") \
         .select("price, recorded_at") \
@@ -275,94 +305,6 @@ async def get_price_stats(product_id: str) -> dict:
 
 
 # ==========================================
-# アバター操作
-# ==========================================
-
-async def get_avatars(search: Optional[str] = None) -> list[dict]:
-    """アバター一覧を取得する"""
-    db = get_db()
-    query = db.table("avatars").select("*")
-    if search:
-        query = query.ilike("name", f"%{search}%")
-    res = query.order("name").execute()
-
-    # 各アバターの対応商品数を整数として付加する
-    for item in res.data:
-        try:
-            count_res = db.table("product_avatar_map") \
-                .select("product_id", count="exact") \
-                .eq("avatar_id", item["id"]) \
-                .execute()
-            item["product_count"] = count_res.count or 0
-        except Exception:
-            item["product_count"] = 0
-
-    return res.data
-
-
-async def get_avatar_by_id(avatar_id: str) -> Optional[dict]:
-    """アバターIDでアバターを取得する"""
-    db = get_db()
-    try:
-        res = db.table("avatars") \
-            .select("*") \
-            .eq("id", avatar_id) \
-            .limit(1) \
-            .execute()
-        return _first_or_none(res)
-    except Exception as e:
-        print(f"[get_avatar_by_id] エラー: {e}")
-        return None
-
-
-async def get_avatar_by_name(name: str) -> Optional[dict]:
-    """アバター名（部分一致）でアバターを取得する"""
-    db = get_db()
-    try:
-        res = db.table("avatars") \
-            .select("*") \
-            .ilike("name", f"%{name}%") \
-            .limit(1) \
-            .execute()
-        return _first_or_none(res)
-    except Exception as e:
-        print(f"[get_avatar_by_name] エラー: {e}")
-        return None
-
-
-async def get_products_by_avatar(
-    avatar_id: str,
-    page: int = 1,
-    per_page: int = 20,
-    category: Optional[str] = None,
-    sort: str = "popular",
-) -> tuple[list[dict], int]:
-    """アバター対応商品一覧を取得する"""
-    db = get_db()
-    offset = (page - 1) * per_page
-
-    query = db.table("product_avatar_map") \
-        .select("products(*)", count="exact") \
-        .eq("avatar_id", avatar_id)
-
-    res = query.range(offset, offset + per_page - 1).execute()
-    items = [r["products"] for r in res.data if r.get("products")]
-    return items, (res.count or 0)
-
-
-async def link_product_avatar(product_id: str, avatar_id: str) -> None:
-    """商品とアバターを紐づける（中間テーブル）"""
-    db = get_db()
-    try:
-        db.table("product_avatar_map").insert({
-            "product_id": product_id,
-            "avatar_id": avatar_id,
-        }).execute()
-    except Exception:
-        pass  # 既存レコードの場合は無視
-
-
-# ==========================================
 # レビュー操作
 # ==========================================
 
@@ -383,7 +325,7 @@ async def get_reviews(
     offset = (page - 1) * per_page
 
     res = db.table("reviews") \
-        .select("*, avatars(name), profiles(username)", count="exact") \
+        .select("*, profiles(username)", count="exact") \
         .eq("product_id", product_id) \
         .order("created_at", desc=True) \
         .range(offset, offset + per_page - 1) \
@@ -412,42 +354,6 @@ async def get_review_stats(product_id: str) -> dict:
         "average_rating": round(sum(ratings) / len(ratings), 1),
         "rating_distribution": distribution,
     }
-
-
-async def get_avatar_ratings(product_id: str) -> list[dict]:
-    """商品のアバター別平均評価を取得する"""
-    db = get_db()
-    res = db.table("reviews") \
-        .select("rating, avatar_id, avatars(name)") \
-        .eq("product_id", product_id) \
-        .execute()
-
-    if not res.data:
-        return []
-
-    # アバターIDごとに集計
-    avatar_map: dict[str, dict] = {}
-    for r in res.data:
-        aid = r["avatar_id"]
-        if aid not in avatar_map:
-            avatar_map[aid] = {
-                "avatar_id": aid,
-                "avatar_name": (r.get("avatars") or {}).get("name", "不明"),
-                "ratings": [],
-            }
-        avatar_map[aid]["ratings"].append(r["rating"])
-
-    result = []
-    for v in avatar_map.values():
-        ratings = v["ratings"]
-        result.append({
-            "avatar_id": v["avatar_id"],
-            "avatar_name": v["avatar_name"],
-            "average_rating": round(sum(ratings) / len(ratings), 1),
-            "review_count": len(ratings),
-        })
-
-    return sorted(result, key=lambda x: x["average_rating"], reverse=True)
 
 
 async def has_user_reviewed(product_id: str, user_id: str) -> bool:
@@ -502,6 +408,6 @@ async def update_crawl_progress(category: str, last_page: int, collected_delta: 
 
 
 async def reset_crawl_progress(category: str) -> None:
-    """カテゴリの進捗をリセットする（最初からやり直したい時用）"""
+    """カテゴリの進捗をリセットする"""
     db = get_db()
     db.table("crawl_progress").delete().eq("category", category).execute()

@@ -40,7 +40,7 @@ async def get_current_user(
     except Exception:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="トークンが無効または期限切れです",
+            detail="トークンが無効または期限切れです。再ログインしてください。",
         )
 
 

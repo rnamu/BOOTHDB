@@ -1,6 +1,6 @@
 # models.py - リクエスト・レスポンスのデータモデル定義
 
-from pydantic import BaseModel, HttpUrl
+from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime
 
@@ -11,7 +11,7 @@ from datetime import datetime
 
 class ProductRegisterRequest(BaseModel):
     """商品URL登録リクエスト"""
-    booth_url: str  # 例: https://booth.pm/ja/items/1234567
+    booth_url: str
 
 
 class ProductResponse(BaseModel):
@@ -59,52 +59,13 @@ class PriceHistoryResponse(BaseModel):
 
 
 # ==========================================
-# アバター関連
+# レビュー関連（使用アバターなし）
 # ==========================================
-
-class AvatarResponse(BaseModel):
-    """アバター情報レスポンス"""
-    id: str
-    name: str
-    name_en: Optional[str]
-    creator: Optional[str]
-    product_count: Optional[int] = None
-
-    @classmethod
-    def __get_validators__(cls):
-        yield cls.validate
-
-    model_config = {"arbitrary_types_allowed": True}
-
-    def model_post_init(self, __context):
-        if isinstance(self.product_count, list):
-            self.product_count = self.product_count[0].get("count", 0) if self.product_count else 0
-
-
-class AvatarListResponse(BaseModel):
-    """アバター一覧レスポンス"""
-    items: list[AvatarResponse]
-    total: int
-
-
-# ==========================================
-# レビュー関連
-# ==========================================
-
-class ReviewCreateRequest(BaseModel):
-    """レビュー投稿リクエスト"""
-    product_id: str
-    avatar_id: str
-    rating: int          # 1〜5
-    comment: Optional[str] = None
-
 
 class ReviewResponse(BaseModel):
     """レビュー1件レスポンス"""
     id: str
     product_id: str
-    avatar_id: str
-    avatar_name: Optional[str]
     rating: int
     comment: Optional[str]
     username: Optional[str]
@@ -116,15 +77,7 @@ class ReviewListResponse(BaseModel):
     items: list[ReviewResponse]
     total: int
     average_rating: Optional[float]
-    rating_distribution: dict  # {"5": 10, "4": 5, ...}
-
-
-class AvatarRatingResponse(BaseModel):
-    """アバター別評価レスポンス"""
-    avatar_id: str
-    avatar_name: str
-    average_rating: float
-    review_count: int
+    rating_distribution: dict
 
 
 # ==========================================
@@ -147,6 +100,7 @@ class UserLoginRequest(BaseModel):
 class AuthResponse(BaseModel):
     """認証レスポンス"""
     access_token: str
+    refresh_token: str
     token_type: str = "bearer"
     user_id: str
     username: str

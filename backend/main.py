@@ -12,19 +12,18 @@ from config import settings
 from models import (
     ProductRegisterRequest, ProductResponse, ProductListResponse,
     PriceHistoryResponse,
-    AvatarResponse, AvatarListResponse,
-    ReviewCreateRequest, ReviewResponse, ReviewListResponse, AvatarRatingResponse,
+    ReviewListResponse,
     MessageResponse,
 )
 from database import (
     get_product_by_booth_id, create_product, get_products, get_db,
     add_price_history, add_price_history_for_variations,
     get_price_history, get_price_history_by_variation, get_price_stats,
-    get_avatars, get_avatar_by_id, get_avatar_by_name, get_products_by_avatar, link_product_avatar,
-    create_review, get_reviews, get_review_stats, get_avatar_ratings,
+    create_review, get_reviews, get_review_stats,
     has_user_reviewed, save_product_variations, get_product_variations,
+    get_sale_products, get_new_products,
 )
-from scraper import extract_booth_item_id, scrape_booth_item
+from scraper import extract_booth_item_id, scrape_booth_item, CRAWL_CATEGORIES
 from scheduler import start_scheduler, stop_scheduler
 from auth import get_current_user
 
@@ -61,7 +60,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="BOOTHDB API",
     description="VRChat向けBOOTH商品データベースのバックエンドAPI",
-    version="1.0.0",
+    version="2.0.0",
     lifespan=lifespan,
 )
 
@@ -89,7 +88,17 @@ async def ping():
 
 @app.get("/", tags=["システム"])
 async def root():
-    return {"message": "BOOTHDB API", "version": "1.0.0"}
+    return {"message": "BOOTHDB API", "version": "2.0.0"}
+
+
+# ==========================================
+# カテゴリ一覧API（フロントのカテゴリタグ表示用）
+# ==========================================
+
+@app.get("/api/categories", tags=["商品"])
+async def list_categories():
+    """収集対象カテゴリの一覧を返す"""
+    return {"items": list(CRAWL_CATEGORIES.keys())}
 
 
 # ==========================================
@@ -127,18 +136,11 @@ async def register_product(
     }
     product = await create_product(product_data)
 
-    # バリエーションごとの価格履歴を記録（単一価格商品でも1系統として記録される）
     if scraped.get("variations"):
         await add_price_history_for_variations(product["id"], scraped["variations"])
         await save_product_variations(product["id"], scraped["variations"])
     elif scraped["current_price"] is not None:
         await add_price_history(product["id"], scraped["current_price"])
-
-    for avatar_name in scraped.get("extracted_avatar_names", []):
-        from database import get_avatar_by_name
-        avatar = await get_avatar_by_name(avatar_name)
-        if avatar:
-            await link_product_avatar(product["id"], avatar["id"])
 
     return product
 
@@ -152,6 +154,20 @@ async def list_products(
 ):
     items, total = await get_products(page, per_page, category, search)
     return {"items": items, "total": total, "page": page, "per_page": per_page}
+
+
+@app.get("/api/products/new", tags=["商品"])
+async def list_new_products(limit: int = Query(6, ge=1, le=20)):
+    """新着商品を取得する（トップページ用）"""
+    items = await get_new_products(limit)
+    return {"items": items, "total": len(items)}
+
+
+@app.get("/api/products/sale", tags=["商品"])
+async def list_sale_products(limit: int = Query(6, ge=1, le=20)):
+    """セール中（値下がり中）商品を取得する（トップページ・ヘッダー用）"""
+    items = await get_sale_products(limit)
+    return {"items": items, "total": len(items)}
 
 
 @app.get("/api/products/{product_id}", response_model=ProductResponse, tags=["商品"])
@@ -224,57 +240,29 @@ async def get_product_price_history_by_variation(
         "lowest_price": stats.get("lowest_price"),
         "lowest_price_date": stats.get("lowest_price_date"),
         "highest_price": stats.get("highest_price"),
-        "series": grouped,  # { "バリエーション名": [{"price":..., "recorded_at":...}, ...], ... }
+        "series": grouped,
     }
 
 
 # ==========================================
-# アバターAPI
+# レビューAPI（使用アバターなし版）
 # ==========================================
 
-@app.get("/api/avatars", response_model=AvatarListResponse, tags=["アバター"])
-async def list_avatars(search: Optional[str] = None):
-    items = await get_avatars(search)
-    return {"items": items, "total": len(items)}
-
-
-@app.get("/api/avatars/{avatar_id}", response_model=AvatarResponse, tags=["アバター"])
-async def get_avatar(avatar_id: str):
-    avatar = await get_avatar_by_id(avatar_id)
-    if not avatar:
-        raise HTTPException(status_code=404, detail="アバターが見つかりません")
-    return avatar
-
-
-@app.get("/api/avatars/{avatar_id}/products", response_model=ProductListResponse, tags=["アバター"])
-async def get_avatar_products(
-    avatar_id: str,
-    page: int = Query(1, ge=1),
-    per_page: int = Query(20, ge=1, le=100),
-    category: Optional[str] = None,
-    sort: str = Query("popular", pattern="^(popular|newest|price_asc|discount)$"),
-):
-    avatar = await get_avatar_by_id(avatar_id)
-    if not avatar:
-        raise HTTPException(status_code=404, detail="アバターが見つかりません")
-
-    items, total = await get_products_by_avatar(avatar_id, page, per_page, category, sort)
-    return {"items": items, "total": total, "page": page, "per_page": per_page}
-
-
-# ==========================================
-# レビューAPI
-# ==========================================
-
-@app.post("/api/reviews", response_model=ReviewResponse, tags=["レビュー"])
+@app.post("/api/reviews", tags=["レビュー"])
 async def post_review(
-    body: ReviewCreateRequest,
+    body: dict,
     user: dict = Depends(get_current_user),
 ):
-    if not 1 <= body.rating <= 5:
+    product_id = body.get("product_id")
+    rating = body.get("rating")
+    comment = body.get("comment")
+
+    if not product_id:
+        raise HTTPException(status_code=400, detail="商品IDは必須です")
+    if not isinstance(rating, int) or not 1 <= rating <= 5:
         raise HTTPException(status_code=400, detail="評価は1〜5で入力してください")
 
-    already = await has_user_reviewed(body.product_id, user["id"])
+    already = await has_user_reviewed(product_id, user["id"])
     if already:
         raise HTTPException(status_code=409, detail="この商品にはすでにレビューを投稿済みです")
 
@@ -284,17 +272,13 @@ async def post_review(
 
     review_data = {
         "id": str(uuid.uuid4()),
-        "product_id": body.product_id,
-        "avatar_id": body.avatar_id,
+        "product_id": product_id,
         "user_id": user["id"],
-        "rating": body.rating,
-        "comment": body.comment,
+        "rating": rating,
+        "comment": comment,
     }
     review = await create_review(review_data)
     review["username"] = username
-
-    avatar = await get_avatar_by_id(body.avatar_id)
-    review["avatar_name"] = (avatar or {}).get("name")
 
     return review
 
@@ -312,7 +296,6 @@ async def get_product_reviews(
     for r in items:
         formatted.append({
             **r,
-            "avatar_name": (r.get("avatars") or {}).get("name"),
             "username": (r.get("profiles") or {}).get("username", "匿名ユーザー"),
         })
 
@@ -324,13 +307,8 @@ async def get_product_reviews(
     }
 
 
-@app.get("/api/products/{product_id}/reviews/avatars", response_model=list[AvatarRatingResponse], tags=["レビュー"])
-async def get_product_avatar_ratings(product_id: str):
-    return await get_avatar_ratings(product_id)
-
-
 # ==========================================
-# 認証API
+# 認証API（リフレッシュトークン対応）
 # ==========================================
 
 @app.post("/api/auth/register", tags=["認証"])
@@ -395,6 +373,7 @@ async def login(body: dict):
 
         return {
             "access_token": session.access_token,
+            "refresh_token": session.refresh_token,
             "token_type": "bearer",
             "user_id": user.id,
             "username": username,
@@ -403,7 +382,41 @@ async def login(body: dict):
         raise
     except Exception as e:
         print(f"[Login Error] {type(e).__name__}: {str(e)}")
-        raise HTTPException(status_code=401, detail=f"ログインに失敗しました: {type(e).__name__}: {str(e)}")
+        raise HTTPException(status_code=401, detail="メールアドレスまたはパスワードが正しくありません")
+
+
+@app.post("/api/auth/refresh", tags=["認証"])
+async def refresh_token(body: dict):
+    """
+    リフレッシュトークンを使ってアクセストークンを再発行する。
+    アクセストークンは通常1時間で失効するため、フロント側はAPIが401を
+    返したタイミングでこのエンドポイントを呼び、新しいトークンに差し替える。
+    """
+    from supabase import create_client
+    client = create_client(settings.supabase_url, settings.supabase_key)
+
+    refresh_tok = body.get("refresh_token", "")
+    if not refresh_tok:
+        raise HTTPException(status_code=400, detail="リフレッシュトークンが必要です")
+
+    try:
+        res = client.auth.refresh_session(refresh_tok)
+        session = getattr(res, 'session', None)
+        user = getattr(res, 'user', None)
+
+        if not session or not user:
+            raise HTTPException(status_code=401, detail="再ログインが必要です")
+
+        return {
+            "access_token": session.access_token,
+            "refresh_token": session.refresh_token,
+            "token_type": "bearer",
+            "user_id": user.id,
+        }
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=401, detail="セッションの更新に失敗しました。再ログインしてください。")
 
 
 @app.get("/api/auth/me", tags=["認証"])
@@ -428,8 +441,7 @@ async def rescrape_product_as_user(
 ):
     """
     商品情報を再取得して上書き更新する。
-    ADMIN_EMAIL_WHITELISTに登録されたメールアドレスのユーザーのみ実行できる
-    （index.htmlからの通常ログインで管理者操作をするための経路）。
+    ADMIN_EMAIL_WHITELISTに登録されたメールアドレスのユーザーのみ実行できる。
     """
     if (user.get("email") or "").lower() not in ADMIN_EMAIL_WHITELIST:
         raise HTTPException(status_code=403, detail="この操作には管理者権限が必要です")
@@ -461,11 +473,6 @@ async def rescrape_product_as_user(
         await save_product_variations(product_id, scraped["variations"])
     elif scraped["current_price"] is not None:
         await add_price_history(product_id, scraped["current_price"])
-
-    for avatar_name in scraped.get("extracted_avatar_names", []):
-        avatar = await get_avatar_by_name(avatar_name)
-        if avatar:
-            await link_product_avatar(product_id, avatar["id"])
 
     updated = db.table("products").select("*").eq("id", product_id).maybe_single().execute()
     return updated.data
@@ -537,49 +544,9 @@ async def admin_delete_review(review_id: str, token: str = Depends(require_admin
     return {"message": "削除しました"}
 
 
-@app.post("/api/admin/avatars", tags=["管理者"])
-async def admin_create_avatar(body: dict, token: str = Depends(require_admin)):
-    """アバターを追加（管理者専用）"""
-    name    = body.get("name", "").strip()
-    name_en = body.get("name_en", "").strip()
-    creator = body.get("creator", "").strip()
-    if not name:
-        raise HTTPException(status_code=400, detail="アバター名は必須です")
-    db = get_db()
-    res = db.table("avatars").insert({
-        "id": str(uuid.uuid4()),
-        "name": name,
-        "name_en": name_en or None,
-        "creator": creator or None,
-    }).execute()
-    return res.data[0]
-
-
-@app.patch("/api/admin/avatars/{avatar_id}", tags=["管理者"])
-async def admin_update_avatar(avatar_id: str, body: dict, token: str = Depends(require_admin)):
-    """アバターを編集（管理者専用）"""
-    update_data = {k: v for k, v in body.items() if k in ("name", "name_en", "creator")}
-    if not update_data:
-        raise HTTPException(status_code=400, detail="更新するデータがありません")
-    db = get_db()
-    res = db.table("avatars").update(update_data).eq("id", avatar_id).execute()
-    return res.data[0]
-
-
-@app.delete("/api/admin/avatars/{avatar_id}", tags=["管理者"])
-async def admin_delete_avatar(avatar_id: str, token: str = Depends(require_admin)):
-    """アバターを削除（管理者専用）"""
-    db = get_db()
-    db.table("avatars").delete().eq("id", avatar_id).execute()
-    return {"message": "削除しました"}
-
-
 @app.post("/api/admin/products/{product_id}/rescrape", tags=["管理者"])
 async def admin_rescrape_product(product_id: str, token: str = Depends(require_admin)):
-    """
-    商品情報を再取得して上書き更新する（管理者専用）。
-    タイトル抽出ロジックなどを修正した後、既存商品を直したい場合に使う。
-    """
+    """商品情報を再取得して上書き更新する（管理者専用）"""
     db = get_db()
     res = db.table("products").select("booth_item_id").eq("id", product_id).maybe_single().execute()
     if not res or not res.data:
@@ -602,18 +569,11 @@ async def admin_rescrape_product(product_id: str, token: str = Depends(require_a
     }
     db.table("products").update(update_data).eq("id", product_id).execute()
 
-    # バリエーションごとの価格履歴を記録し、バリエーション一覧も上書き保存
     if scraped.get("variations"):
         await add_price_history_for_variations(product_id, scraped["variations"])
         await save_product_variations(product_id, scraped["variations"])
     elif scraped["current_price"] is not None:
         await add_price_history(product_id, scraped["current_price"])
-
-    # アバター紐付けも再実行
-    for avatar_name in scraped.get("extracted_avatar_names", []):
-        avatar = await get_avatar_by_name(avatar_name)
-        if avatar:
-            await link_product_avatar(product_id, avatar["id"])
 
     updated = db.table("products").select("*").eq("id", product_id).maybe_single().execute()
     return updated.data
@@ -628,10 +588,7 @@ _crawl_running = {"active": False}
 
 @app.post("/api/admin/crawl/run", tags=["管理者"])
 async def admin_run_crawl(token: str = Depends(require_admin)):
-    """
-    カテゴリクロールを今すぐ実行する（管理者専用）。
-    実行には時間がかかるためバックグラウンドで開始し、即座にレスポンスを返す。
-    """
+    """カテゴリクロールを今すぐ実行する（管理者専用）"""
     if _crawl_running["active"]:
         raise HTTPException(status_code=409, detail="クロールはすでに実行中です")
 
@@ -652,7 +609,6 @@ async def admin_run_crawl(token: str = Depends(require_admin)):
 @app.get("/api/admin/crawl/status", tags=["管理者"])
 async def admin_crawl_status(token: str = Depends(require_admin)):
     """クロールの進捗状況を取得する（管理者専用）"""
-    from scraper import CRAWL_CATEGORIES
     from database import get_crawl_progress
 
     progress_list = []

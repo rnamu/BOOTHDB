@@ -1,5 +1,4 @@
 # scraper.py - BOOTH商品情報スクレイパー
-# DEBUG_VERSION_MARKER_001
 
 import re
 import asyncio
@@ -23,7 +22,6 @@ def extract_booth_item_id(url: str) -> Optional[str]:
     match = BOOTH_ITEM_URL_PATTERN.match(url.strip())
     if match:
         return match.group(1)
-    # shop.booth.pm 形式にも対応
     alt_pattern = re.compile(r"https?://[^.]+\.booth\.pm/items/(\d+)")
     alt_match = alt_pattern.match(url.strip())
     if alt_match:
@@ -41,6 +39,8 @@ def normalize_booth_url(item_id: str) -> str:
 # ==========================================
 
 # クロール対象カテゴリ（BOOTHのbrowseページ名）
+# キー: 表示名（products.categoryに保存される正規名としても使う）
+# 値:   BOOTHのbrowseページURLに使うスラッグ（URLエンコード済み）
 CRAWL_CATEGORIES = {
     "3Dモデル": "3D%E3%83%A2%E3%83%87%E3%83%AB",
     "3Dキャラクター": "3D%E3%82%AD%E3%83%A3%E3%83%A9%E3%82%AF%E3%82%BF%E3%83%BC",
@@ -49,6 +49,20 @@ CRAWL_CATEGORIES = {
     "3Dテクスチャ": "3D%E3%83%86%E3%82%AF%E3%82%B9%E3%83%81%E3%83%A3",
     "3D装飾品": "3D%E8%A3%85%E9%A3%BE%E5%93%81",
     "3D髪型": "3D%E9%AB%AA%E5%9E%8B",
+}
+
+# カテゴリ名の表記ゆれを正規化するための対応表。
+# BOOTHのパンくず（js-item-category-breadcrumbs）から取得した生のカテゴリ名を、
+# 上記 CRAWL_CATEGORIES のキーに寄せるために使う。
+CATEGORY_NORMALIZE_MAP = {
+    "3Dモデル": "3Dモデル",
+    "3Dキャラクター": "3Dキャラクター",
+    "3D衣装": "3D衣装",
+    "3D小道具": "3D小道具",
+    "3Dテクスチャ": "3Dテクスチャ",
+    "3D装飾品": "3D装飾品",
+    "3D髪型": "3D髪型",
+    "3Dモーション・アニメーション": "3Dモーション・アニメーション",
 }
 
 ITEM_LINK_PATTERN = re.compile(r"/items/(\d+)")
@@ -145,7 +159,6 @@ async def scrape_booth_item(item_id: str) -> Optional[dict]:
         title = _strip_booth_suffix(og_title)
 
     if not title:
-        # フォールバック（og:titleが取れなかった場合のみ見出しを試す）
         title = _get_text(soup, "h2.item-name") or _get_text(soup, '[data-product-name]')
 
     if not title:
@@ -155,22 +168,17 @@ async def scrape_booth_item(item_id: str) -> Optional[dict]:
     # --- 価格・バリエーション ---
     variations = _extract_variations(soup)
 
-    # 単一バリエーション（フォールバック生成）の名前が省略形（末尾が...）の場合、
+    # 単一バリエーション（フォールバックで作られた1件）の名前が
+    # data-product-name由来で省略形（末尾が...）の場合、
     # 確定した正式タイトルに差し替える
     if len(variations) == 1 and variations[0]["name"].endswith("..."):
         variations[0]["name"] = title.strip()[:100]
 
-    # --- 価格・バリエーション ---
-    variations = _extract_variations(soup)
     if variations:
         # 全バリエーション中の最高額をトップ表示価格として採用
         price = max(v["price"] for v in variations)
     else:
         price = _extract_price(soup)
-
-    # 単一バリエーション（フォールバックで作られた1件）の名前が
-    # data-product-name由来で省略形（末尾が...）の場合、
-    # 後段で確定する正式タイトルに差し替える（タイトル確定後に実施）
 
     # --- クリエイター名 ---
     creator_name = _get_text(soup, ".shop-name") \
@@ -180,8 +188,6 @@ async def scrape_booth_item(item_id: str) -> Optional[dict]:
     shop_name = _get_text(soup, ".shop-name a") or creator_name
 
     if not creator_name:
-        # og:site_nameはBOOTH固定文言のため使わず、og:titleの店名部分から拾う
-        og_title = _get_meta(soup, "og:title")
         creator_name = _extract_shop_name_from_og_title(og_title)
         shop_name = shop_name or creator_name
 
@@ -189,20 +195,18 @@ async def scrape_booth_item(item_id: str) -> Optional[dict]:
     thumbnail_url = _get_meta(soup, "og:image")
 
     # --- 説明文 ---
-    # 商品説明本文のコンテナのみを対象にする（おすすめ商品一覧などは除外）
     description = _get_text(soup, ".js-market-item-detail-description") \
         or _get_text(soup, ".market-item-detail-description") \
         or _get_text(soup, "[data-item-description]")
 
     if not description:
-        # フォールバック: og:descriptionはBOOTH固定の注意書きのことが多いため最終手段
         description = _get_meta(soup, "og:description")
 
     # --- カテゴリ ---
     category = _extract_category(soup)
 
-    # --- 説明文からアバター名を抽出 ---
-    avatar_names = _extract_avatar_names(description or "")
+    # --- 説明文からアバター名を抽出（現在は使用していないが、互換性のため残す） ---
+    avatar_names: list[str] = []
 
     return {
         "booth_item_id": item_id,
@@ -213,7 +217,7 @@ async def scrape_booth_item(item_id: str) -> Optional[dict]:
         "thumbnail_url": thumbnail_url,
         "booth_url": url,
         "category": category,
-        "description": (description or "")[:2000],  # 最大2000文字
+        "description": (description or "")[:2000],
         "extracted_avatar_names": avatar_names,
         "variations": variations,
     }
@@ -277,9 +281,7 @@ def _strip_booth_suffix(og_title: str) -> str:
     'オリジナル3Dモデル「しなの」 - ポンデロニウム研究所 - BOOTH'
     のような og:title から、末尾の店名・'BOOTH' を除去して商品名のみ返す。
     """
-    # 末尾の " - BOOTH" を除去
     text = re.sub(r"\s*-\s*BOOTH\s*$", "", og_title)
-    # さらに末尾の " - 店名" を除去（ハイフン区切りの最後のセグメント）
     parts = text.split(" - ")
     if len(parts) >= 2:
         return parts[0].strip()
@@ -305,8 +307,6 @@ def _extract_price(soup: BeautifulSoup) -> Optional[int]:
     価格要素を複数のセレクタ・方法で試して数値に変換する
     BOOTH のHTML構造が変わっても対応しやすいよう複数候補を用意
     """
-    # 最優先: バリエーションリスト内の最初の add-cart ボタンの
-    # data-product-price 属性（BOOTHが商品ごとに正確な価格を埋め込んでいる）
     btn = soup.select_one('li.variation-item button.add-cart[data-product-price]')
     if not btn:
         btn = soup.select_one('button.add-cart[data-product-price]')
@@ -333,7 +333,6 @@ def _extract_price(soup: BeautifulSoup) -> Optional[int]:
             if price is not None and price > 0:
                 return price
 
-    # JSONLDから価格を探す（構造化データ）
     import json
     for script in soup.find_all("script", type="application/ld+json"):
         try:
@@ -353,17 +352,9 @@ def _extract_price(soup: BeautifulSoup) -> Optional[int]:
         except (json.JSONDecodeError, ValueError, TypeError):
             continue
 
-    # フォールバック: 価格表示は通常「¥ 数字」の直後に改行や空白が続く
-    # 単独行として表示される（例: "¥ 0" や "¥ 5,000"）。
-    # 文章中の金額言及（クレジット欄やお知らせ文）と区別するため、
-    # 末尾が桁区切りの数字のみで終わる行を優先的に探す。
     page_text = soup.get_text()
     head_text = page_text[:3000]
-    print(f"[DEBUG _extract_price] head_text先頭500文字: {head_text[:500]!r}")
-    all_yen = re.findall(r"[¥￥]\s*[\d,]+", head_text)
-    print(f"[DEBUG _extract_price] head_text内の全¥金額: {all_yen}")
 
-    # 行単位で "¥" のみで構成される価格表示行を探す（最優先）
     line_pattern = re.compile(r"^[¥￥]\s*([\d,]+)\s*~?\s*$", re.MULTILINE)
     line_match = line_pattern.search(head_text)
     if line_match:
@@ -371,7 +362,6 @@ def _extract_price(soup: BeautifulSoup) -> Optional[int]:
         if price is not None:
             return price
 
-    # フォールバック: 通常のパターンマッチ（0円も正しく許容する）
     yen_pattern = re.compile(r"[¥￥]\s*([\d,]+)")
     match = yen_pattern.search(head_text)
     if match:
@@ -380,7 +370,6 @@ def _extract_price(soup: BeautifulSoup) -> Optional[int]:
             return price
 
     return None
-
 
 
 def _parse_price_string(raw: Optional[str]) -> Optional[int]:
@@ -394,50 +383,47 @@ def _parse_price_string(raw: Optional[str]) -> Optional[int]:
 
 
 def _extract_category(soup: BeautifulSoup) -> Optional[str]:
-    """カテゴリ情報をパンくずリストまたはタグから取得する"""
+    """
+    カテゴリ情報をBOOTHのカテゴリパンくずから取得する。
+
+    BOOTHの商品ページには以下のような構造で実際のカテゴリ階層が入っている:
+        <div id="js-item-category-breadcrumbs">
+          <nav>
+            <a href=".../browse/3D%E3%83%A2%E3%83%87%E3%83%AB">3Dモデル</a>
+            →
+            <a href=".../browse/3D%E3%83%A2%E3%83%BC%E3%82%B7%E3%83%A7%E3%83%B3...">3Dモーション・アニメーション</a>
+          </nav>
+        </div>
+
+    この構造から、最初の（最も大分類の）カテゴリ名を取得する。
+    クロール対象の7カテゴリ（CRAWL_CATEGORIES）のいずれかに一致すれば
+    そのまま使い、一致しない場合も生のテキストをそのまま保存する
+    （将来別カテゴリも収集対象にしたときに備えるため）。
+    """
+    breadcrumb_container = soup.select_one("#js-item-category-breadcrumbs")
+    if breadcrumb_container:
+        links = breadcrumb_container.select("a")
+        if links:
+            # 最初のリンクが最上位カテゴリ（例: 3Dモデル）
+            first_category = links[0].get_text(strip=True)
+            if first_category:
+                return CATEGORY_NORMALIZE_MAP.get(first_category, first_category)
+
+    # フォールバック1: 一般的なbreadcrumbクラス
     breadcrumb = soup.select(".breadcrumb li, .breadcrumbs li")
     if len(breadcrumb) >= 2:
-        return breadcrumb[-2].get_text(strip=True) or None
+        text = breadcrumb[-2].get_text(strip=True)
+        if text:
+            return CATEGORY_NORMALIZE_MAP.get(text, text)
 
+    # フォールバック2: タグ要素
     tag_el = soup.select_one(".tag, .category-tag")
     if tag_el:
-        return tag_el.get_text(strip=True) or None
+        text = tag_el.get_text(strip=True)
+        if text:
+            return CATEGORY_NORMALIZE_MAP.get(text, text)
 
     return None
-
-
-# 対応アバター抽出用のキーワードリスト
-KNOWN_AVATAR_NAMES = [
-    "しなの", "シナノ",
-    "マヌカ",
-    "セレスティア", "Selestia",
-    "桔梗", "キキョウ",
-    "萌", "もえ",
-    "ここあ", "ここア",
-    "あのん", "アノン",
-    "ライム", "Lime",
-    "チセ", "Chise",
-    "ミルク", "Milk",
-    "フィア", "Fia",
-    "心桜", "このは",
-    "竜胆", "龍胆",
-    "ルーシュカ",
-    "狐雪", "きつね",
-    "メリノ",
-    "ヒナ", "雛",
-]
-
-
-def _extract_avatar_names(text: str) -> list[str]:
-    """
-    商品説明文から対応アバター名を抽出する
-    既知のアバター名リストと照合する
-    """
-    found = []
-    for name in KNOWN_AVATAR_NAMES:
-        if name in text and name not in found:
-            found.append(name)
-    return found
 
 
 def _extract_variations(soup: BeautifulSoup) -> list[dict]:
@@ -503,9 +489,6 @@ def _extract_variations(soup: BeautifulSoup) -> list[dict]:
     if cart_btn:
         price = _parse_price_string(cart_btn.get("data-product-price"))
         if price is not None:
-            # 商品名はdata-product-name属性（省略形の場合あり）から取得し、
-            # 省略されていれば後段でog:titleから補完されたタイトルを使う方が
-            # 望ましいが、ここでは単純にdata-product-nameを使う。
             raw_name = cart_btn.get("data-product-name") or ""
             name = raw_name.strip()
             if name:
