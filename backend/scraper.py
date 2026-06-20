@@ -479,8 +479,5 @@ def _extract_variations(soup: BeautifulSoup) -> list[dict]:
             "sort_order": len(variations),
         })
 
-    # バリエーションが1件以下の場合は「単一価格商品」とみなし空リストを返す
-    if len(variations) <= 1:
-        return []
-
+    # 1件でもあればそのまま返す（単一価格商品でも名前+価格の1行を表示するため）
     return variations
