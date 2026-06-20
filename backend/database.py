@@ -201,30 +201,35 @@ async def get_all_products_for_scrape() -> list[dict]:
 
 async def add_price_history(product_id: str, price: int, variation_name: Optional[str] = None) -> None:
     """
-    価格履歴を追加する。直近の記録（同じバリエーション名）と同じ価格の場合は
-    新しい点を追加しない。
+    価格履歴を追加する。
+    「直近の記録」ではなく「今日すでに記録された価格」と比較し、
+    同じ価格であれば新しい点を追加しない。
+    これにより、同日内に何度再収集しても点が増えるのを防ぐ。
     """
     db = get_db()
+    today_str = datetime.utcnow().strftime("%Y-%m-%d")
+
     try:
         query = db.table("price_history") \
-            .select("price") \
-            .eq("product_id", product_id)
+            .select("price, recorded_at") \
+            .eq("product_id", product_id) \
+            .gte("recorded_at", f"{today_str}T00:00:00") \
+            .order("recorded_at", desc=True)
 
         if variation_name is not None:
             query = query.eq("variation_name", variation_name)
         else:
             query = query.is_("variation_name", "null")
 
-        latest = query.order("recorded_at", desc=True).limit(1).execute()
+        today_records = query.limit(1).execute()
 
-        latest_price = None
-        if latest and latest.data and len(latest.data) > 0:
-            latest_price = latest.data[0]["price"]
-
-        if latest_price == price:
-            return
+        if today_records and today_records.data and len(today_records.data) > 0:
+            today_price = today_records.data[0]["price"]
+            if today_price == price:
+                # 今日すでに同じ価格が記録済みならスキップ
+                return
     except Exception as e:
-        print(f"[add_price_history] 直近価格の確認エラー: {e}")
+        print(f"[add_price_history] 当日価格の確認エラー: {e}")
 
     db.table("price_history").insert({
         "product_id": product_id,
