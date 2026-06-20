@@ -10,6 +10,7 @@ from database import (
     get_all_products_for_scrape,
     update_product_price,
     add_price_history,
+    add_price_history_for_variations,
     get_db,
     get_product_by_booth_id,
     create_product,
@@ -24,6 +25,7 @@ from scraper import (
     scrape_booth_item,
     fetch_category_page_item_ids,
     CRAWL_CATEGORIES,
+    extract_booth_item_id,
 )
 
 scheduler = AsyncIOScheduler()
@@ -36,6 +38,7 @@ CRAWL_PAGES_PER_RUN = 5
 async def check_all_prices() -> None:
     """
     登録済み全商品の価格をチェックし、変動があれば価格履歴に記録する。
+    バリエーションがある商品は全バリエーション分の価格をチェックする。
     BOOTHへの負荷軽減のためリクエスト間にscrape_delay_secondsの間隔を空ける。
     """
     print("[Scheduler] 価格チェック開始")
@@ -51,10 +54,13 @@ async def check_all_prices() -> None:
         booth_item_id = product["booth_item_id"]
 
         try:
-            price = await scrape_price_only(booth_item_id)
+            # バリエーション込みで全体を再取得する
+            # （価格のみの軽量取得だとバリエーションごとの価格が分からないため）
+            scraped = await scrape_booth_item(booth_item_id)
 
-            if price is not None:
-                # DBの現在価格を取得して変動確認
+            if scraped:
+                price = scraped["current_price"]
+
                 db = get_db()
                 res = db.table("products") \
                     .select("current_price") \
@@ -64,11 +70,14 @@ async def check_all_prices() -> None:
 
                 current = (res.data or {}).get("current_price")
 
-                # 価格履歴は常に記録（グラフ描画のため）
-                await add_price_history(product_id, price)
+                # バリエーションごとの価格履歴を記録（変動時のみ点を追加）
+                if scraped.get("variations"):
+                    await add_price_history_for_variations(product_id, scraped["variations"])
+                elif price is not None:
+                    await add_price_history(product_id, price)
 
                 # 価格が変動した場合のみproductsテーブルを更新
-                if current != price:
+                if current != price and price is not None:
                     await update_product_price(product_id, price)
                     print(f"[Scheduler] 価格変動: {booth_item_id} {current}円 → {price}円")
 
@@ -113,12 +122,13 @@ async def _register_item_if_new(item_id: str) -> bool:
         "description": scraped["description"],
     }
     product = await create_product(product_data)
-    if scraped["current_price"] is not None:
-        await add_price_history(product["id"], scraped["current_price"])
 
-    # バリエーションを保存
+    # バリエーションごとの価格履歴を記録し、バリエーション一覧も保存
     if scraped.get("variations"):
+        await add_price_history_for_variations(product["id"], scraped["variations"])
         await save_product_variations(product["id"], scraped["variations"])
+    elif scraped["current_price"] is not None:
+        await add_price_history(product["id"], scraped["current_price"])
 
     for avatar_name in scraped.get("extracted_avatar_names", []):
         avatar = await get_avatar_by_name(avatar_name)
