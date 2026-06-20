@@ -446,15 +446,11 @@ def _extract_category(soup: BeautifulSoup) -> Optional[str]:
                 print(f"[DEBUG-B] 経路Bで確定: {first_category}")
                 return CATEGORY_NORMALIZE_MAP.get(first_category, first_category)
 
-    # さらなるフォールバック: hrefが/browse/を含むリンクをページ全体から探す
-    # （js-item-category-breadcrumbsの構造自体が変わっていた場合の保険）
-    browse_links = soup.select("a[href*='/browse/']")
-    print(f"[DEBUG-C] browse_links先頭5件={[l.get_text(strip=True) for l in browse_links[:5]]}")
-    if browse_links:
-        first_category = browse_links[0].get_text(strip=True)
-        if first_category:
-            print(f"[DEBUG-C] 経路Cで確定: {first_category}")
-            return CATEGORY_NORMALIZE_MAP.get(first_category, first_category)
+    # 注意: ページ全体から /browse/ リンクを探す方式は、
+    # ページ下部の「おすすめ商品」一覧にある別商品のカテゴリを誤って
+    # 拾ってしまうことが確認されたため廃止した。
+    # #js-item-category-breadcrumbs が見つからない場合は、
+    # 無理に推測せず未分類のままにする方が安全。
 
     # フォールバック1: 一般的なbreadcrumbクラス
     breadcrumb = soup.select(".breadcrumb li, .breadcrumbs li")
