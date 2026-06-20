@@ -416,18 +416,30 @@ def _extract_category(soup: BeautifulSoup) -> Optional[str]:
     # pixiv-icon要素のShadow DOM構文(<template shadowrootmode="open">)が
     # 親要素を起点にした子孫検索を阻害するケースがあるため、
     # soup全体から直接探すことで回避する。
-    all_breadcrumb_containers = soup.select("#js-item-category-breadcrumbs")
-    print(f"[DEBUG] #js-item-category-breadcrumbs 要素数: {len(all_breadcrumb_containers)}")
-    for idx, container in enumerate(all_breadcrumb_containers):
-        container_links = container.select("a")
-        print(f"[DEBUG] コンテナ{idx}: links={[l.get_text(strip=True) for l in container_links]}")
-
     links = soup.select("#js-item-category-breadcrumbs a")
-    print(f"[DEBUG] soup全体からのlinks: {[l.get_text(strip=True) for l in links]}")
     if links:
         first_category = links[0].get_text(strip=True)
         if first_category:
             return CATEGORY_NORMALIZE_MAP.get(first_category, first_category)
+
+    # lxmlパーサーがpixiv-icon要素のShadow DOM構文(<template shadowrootmode="open">)
+    # によって#js-item-category-breadcrumbs内の構造を正しく解析できないケースがある。
+    # その場合に備え、正規表現で該当箇所のみを抜き出し、
+    # html.parser（標準ライブラリ、lxmlより緩い）で再パースして確実に取得する。
+    html_str = str(soup)
+    container_match = re.search(
+        r'<div[^>]*id="js-item-category-breadcrumbs"[^>]*>.*?</div>\s*(?=<)',
+        html_str,
+        re.DOTALL,
+    )
+    if container_match:
+        from bs4 import BeautifulSoup as BS
+        sub_soup = BS(container_match.group(0), "html.parser")
+        sub_links = sub_soup.select("a")
+        if sub_links:
+            first_category = sub_links[0].get_text(strip=True)
+            if first_category:
+                return CATEGORY_NORMALIZE_MAP.get(first_category, first_category)
 
     # さらなるフォールバック: hrefが/browse/を含むリンクをページ全体から探す
     # （js-item-category-breadcrumbsの構造自体が変わっていた場合の保険）
